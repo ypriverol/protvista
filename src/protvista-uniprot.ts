@@ -243,21 +243,48 @@ class ProtvistaUniprot extends LitElement {
    * payloads arrive so that one slow endpoint (e.g. 85MB of variants for
    * TITIN) never blanks the whole viewer.
    */
+  _markDataAvailable() {
+    if (this.hasData) return;
+    this.hasData = true;
+    this.loading = false;
+    this.dispatchEvent(
+      new CustomEvent('protvista-event', {
+        detail: { hasData: true },
+        bubbles: true,
+      })
+    );
+    this.requestUpdate();
+  }
+
   _onDataAvailable(payload: unknown) {
     // Some endpoints return empty arrays, while most fail 🙄
     if (payload && typeof payload === 'object' && 'features' in payload) {
       const features = (payload as { features?: unknown[] }).features;
-      if (Array.isArray(features) && features.length > 0 && !this.hasData) {
-        this.hasData = true;
-        this.loading = false;
-        this.dispatchEvent(
-          new CustomEvent('protvista-event', {
-            detail: { hasData: true },
-            bubbles: true,
-          })
-        );
-        this.requestUpdate();
+      if (Array.isArray(features) && features.length > 0) {
+        this._markDataAvailable();
       }
+    }
+  }
+
+  /**
+   * Availability check on transformed category data: covers payload shapes
+   * without a raw `features` array (AlphaFold confidence, InterPro,
+   * adapter-less Nightingale-native data, variants).
+   */
+  _onCategoryDataAssigned(assigned: unknown) {
+    if (
+      Array.isArray(assigned) &&
+      // `flat()` keeps `undefined` entries for tracks that returned nothing
+      assigned.some((item) => item != null)
+    ) {
+      this._markDataAvailable();
+    } else if (
+      assigned &&
+      typeof assigned === 'object' &&
+      Array.isArray((assigned as { variants?: unknown[] }).variants) &&
+      (assigned as { variants: unknown[] }).variants.length > 0
+    ) {
+      this._markDataAvailable();
     }
   }
 
@@ -364,6 +391,8 @@ class ProtvistaUniprot extends LitElement {
           trackType === 'nightingale-colored-sequence'
             ? categoryData[0]
             : (categoryData.flat() as Record<string, unknown>[]);
+
+        this._onCategoryDataAssigned(this.data[categoryName]);
 
         // Re-render now: this category is ready even if others are still
         // fetching. `updated()` pushes the new data into the track elements.

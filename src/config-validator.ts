@@ -51,6 +51,86 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
 
+// Mirrors the schema's `additionalProperties: false` at each level.
+const checkUnknownKeys = (
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  path: string,
+  errors: ConfigValidationError[]
+) => {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      errors.push({
+        path: `${path}/${key}`,
+        message: `unknown property "${key}". Allowed properties: ${allowed.join(', ')}`,
+      });
+    }
+  }
+};
+
+// Optional properties must still have the right type when present.
+const checkOptionalStrings = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  path: string,
+  errors: ConfigValidationError[]
+) => {
+  for (const key of keys) {
+    if (value[key] !== undefined && typeof value[key] !== 'string') {
+      errors.push({
+        path: `${path}/${key}`,
+        message: `${key} must be a string when present`,
+      });
+    }
+  }
+};
+
+const ROOT_KEYS = ['$schema', 'categories'] as const;
+const CATEGORY_KEYS = [
+  'name',
+  'label',
+  'trackType',
+  'tracks',
+  'color',
+  'shape',
+  'scale',
+  'color-range',
+  'helpPage',
+] as const;
+const CATEGORY_OPTIONAL_STRINGS = [
+  'color',
+  'shape',
+  'scale',
+  'color-range',
+  'helpPage',
+] as const;
+const TRACK_KEYS = [
+  'name',
+  'label',
+  'labelUrl',
+  'filter',
+  'trackType',
+  'data',
+  'tooltip',
+  'color',
+  'shape',
+  'scale',
+  'color-range',
+  'filterComponent',
+  'helpPage',
+] as const;
+const TRACK_OPTIONAL_STRINGS = [
+  'label',
+  'labelUrl',
+  'filter',
+  'color',
+  'shape',
+  'scale',
+  'color-range',
+  'helpPage',
+] as const;
+const DATA_SOURCE_KEYS = ['url', 'adapter'] as const;
+
 function validateDataSource(
   source: unknown,
   path: string,
@@ -60,6 +140,7 @@ function validateDataSource(
     errors.push({ path, message: 'data source must be an object' });
     return;
   }
+  checkUnknownKeys(source, DATA_SOURCE_KEYS, path, errors);
   const { url, adapter } = source;
   if (Array.isArray(url)) {
     if (url.length === 0 || !url.every(isNonEmptyString)) {
@@ -94,6 +175,17 @@ function validateTrack(
   if (!isRecord(track)) {
     errors.push({ path, message: 'track must be an object' });
     return;
+  }
+  checkUnknownKeys(track, TRACK_KEYS, path, errors);
+  checkOptionalStrings(track, TRACK_OPTIONAL_STRINGS, path, errors);
+  if (
+    track.filterComponent !== undefined &&
+    track.filterComponent !== 'nightingale-filter'
+  ) {
+    errors.push({
+      path: `${path}/filterComponent`,
+      message: 'filterComponent must be "nightingale-filter" when present',
+    });
   }
   if (!isNonEmptyString(track.name)) {
     errors.push({
@@ -134,6 +226,8 @@ function validateCategory(
     errors.push({ path, message: 'category must be an object' });
     return;
   }
+  checkUnknownKeys(category, CATEGORY_KEYS, path, errors);
+  checkOptionalStrings(category, CATEGORY_OPTIONAL_STRINGS, path, errors);
   if (!isNonEmptyString(category.name)) {
     errors.push({
       path: `${path}/name`,
@@ -179,6 +273,7 @@ export function validateConfig(value: unknown): ConfigValidationResult {
       errors: [{ path: '', message: 'configuration must be a JSON object' }],
     };
   }
+  checkUnknownKeys(value, ROOT_KEYS, '', errors);
   if (!Array.isArray(value.categories) || value.categories.length === 0) {
     errors.push({
       path: '/categories',

@@ -7,7 +7,17 @@ configure the viewer via JSON.
 ## Quick start
 
 1. Copy this folder anywhere.
-2. Serve it with any static file server (browsers block `fetch` from
+2. Put `protvista-uniprot.mjs` next to `index.html`. The `config-src`
+   feature used here is not yet in a published npm release, so either:
+   - download the module from the live demo:
+     <https://ypriverol.github.io/protvista/starter-kit/protvista-uniprot.mjs>, or
+   - build it from this repository (`yarn build`, then copy
+     `dist/protvista-uniprot.mjs` here).
+
+   Once a release including `config-src` is published, the `<script>` tag in
+   `index.html` can point at the CDN instead.
+
+3. Serve it with any static file server (browsers block `fetch` from
    `file://` pages):
 
    ```bash
@@ -15,7 +25,7 @@ configure the viewer via JSON.
    npx serve .        # or: python3 -m http.server 8000
    ```
 
-3. Open the printed URL. You should see the viewer for `P05067` with:
+4. Open the printed URL. You should see the viewer for `P05067` with:
    - **My annotations** — two tracks loaded from `data/my-features.json`
    - **Public: domains & sites** — a track fetched live from the UniProt
      Proteins API

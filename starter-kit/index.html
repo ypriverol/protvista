@@ -44,9 +44,14 @@
       config-src="./config.json"
     ></protvista-uniprot>
 
-    <script
-      type="module"
-      src="https://cdn.jsdelivr.net/npm/protvista-uniprot@latest/dist/protvista-uniprot.mjs"
-    ></script>
+    <!--
+      config-src is not yet in a published npm release, so the Starter Kit
+      loads the module from a local file. See the README for how to obtain
+      protvista-uniprot.mjs (download from the live demo, or build from
+      source). Once a release including config-src is on npm, this can be
+      swapped for the CDN URL:
+      https://cdn.jsdelivr.net/npm/protvista-uniprot@<version>/dist/protvista-uniprot.mjs
+    -->
+    <script type="module" src="./protvista-uniprot.mjs"></script>
   </body>
 </html>

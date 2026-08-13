@@ -118,6 +118,61 @@ describe('progressive data loading', () => {
     expect(instance.data['SLOW_CATEGORY']).toBeTruthy();
   });
 
+  it('marks data available for payloads without a raw features array', async () => {
+    // Adapter-less track: the payload is already Nightingale-native (an
+    // array), like AlphaFold confidence or custom local data.
+    const nativeConfig = {
+      categories: [
+        {
+          name: 'NATIVE_CATEGORY',
+          label: 'Native',
+          trackType: 'nightingale-track-canvas',
+          tracks: [
+            {
+              name: 'native-track',
+              trackType: 'nightingale-track-canvas',
+              tooltip: '',
+              data: [{ url: 'https://example.org/native/{accession}' }],
+            },
+          ],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: () => Promise.resolve([{ start: 1, end: 10, color: '#990000' }]),
+      }))
+    );
+
+    const instance = new ProtvistaUniprot() as unknown as TestableInstance;
+    instance.accession = 'P05067';
+    instance.config = nativeConfig;
+    await instance._loadData();
+
+    expect(instance.hasData).toBe(true);
+    expect(instance.loading).toBe(false);
+  });
+
+  it('does not mark data available when every track comes back empty', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: () => Promise.resolve({ features: [] }),
+      }))
+    );
+
+    const instance = new ProtvistaUniprot() as unknown as TestableInstance;
+    instance.accession = 'A0A2K5ULD0';
+    instance.config = config;
+    await instance._loadData();
+
+    expect(instance.hasData).toBe(false);
+    expect(instance.loading).toBe(false);
+  });
+
   it('still completes when one endpoint fails entirely', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubGlobal(

@@ -114,6 +114,66 @@ describe('validateConfig', () => {
   });
 });
 
+type LooseConfig = {
+  [k: string]: unknown;
+  categories: Array<{
+    [k: string]: unknown;
+    tracks: Array<{
+      [k: string]: unknown;
+      data: Array<{ [k: string]: unknown }>;
+    }>;
+  }>;
+};
+
+const cloneLoose = (): LooseConfig =>
+  structuredClone(minimalValidConfig) as unknown as LooseConfig;
+
+describe('validateConfig strictness (additionalProperties: false)', () => {
+  it('rejects unknown properties at every level', () => {
+    const config = cloneLoose();
+    config.rogue = true;
+    config.categories[0].mystery = 1;
+    config.categories[0].tracks[0].extra = 'x';
+    config.categories[0].tracks[0].data[0].payload = {};
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    if (result.valid) return;
+    const paths = result.errors.map((e) => e.path);
+    expect(paths).toContain('/rogue');
+    expect(paths).toContain('/categories/0/mystery');
+    expect(paths).toContain('/categories/0/tracks/0/extra');
+    expect(paths).toContain('/categories/0/tracks/0/data/0/payload');
+  });
+
+  it('allows $schema at the root', () => {
+    const config = cloneLoose();
+    config.$schema = 'https://example.org/schema.json';
+    expect(validateConfig(config).valid).toBe(true);
+  });
+
+  it('rejects optional properties with wrong types', () => {
+    const config = cloneLoose();
+    config.categories[0].color = 42;
+    config.categories[0].tracks[0].labelUrl = ['not', 'a', 'string'];
+    config.categories[0].tracks[0].filterComponent = 'unknown-filter';
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    if (result.valid) return;
+    const paths = result.errors.map((e) => e.path);
+    expect(paths).toContain('/categories/0/color');
+    expect(paths).toContain('/categories/0/tracks/0/labelUrl');
+    expect(paths).toContain('/categories/0/tracks/0/filterComponent');
+  });
+
+  it('accepts optional properties with correct types', () => {
+    const config = cloneLoose();
+    config.categories[0].color = '#990000';
+    config.categories[0].tracks[0].labelUrl = 'https://example.org/{accession}';
+    config.categories[0].tracks[0].filterComponent = 'nightingale-filter';
+    expect(validateConfig(config).valid).toBe(true);
+  });
+});
+
 describe('formatConfigErrors', () => {
   it('produces one line per problem', () => {
     const message = formatConfigErrors([
