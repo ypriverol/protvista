@@ -21,6 +21,7 @@ import { amColorScale } from '@nightingale-elements/nightingale-structure';
 // adapters
 import featureAdapter from './adapters/feature-adapter';
 import proteomicsAdapter from './adapters/proteomics-adapter';
+import proteomicsCoverageAdapter from './adapters/proteomics-coverage-adapter';
 import structureAdapter from './adapters/structure-adapter';
 import variationAdapter, {
   TransformedVariant,
@@ -36,7 +37,7 @@ import alphaMissenseHeatmapAdapter from './adapters/alphamissense-heatmap-adapte
 
 import ProtvistaUniprotStructure from './protvista-uniprot-structure';
 
-import { fetchAll, loadComponent } from './utils';
+import { fetchOne, loadComponent } from './utils';
 
 import filterConfig, { colorConfig } from './filter-config';
 import config, {
@@ -44,6 +45,13 @@ import config, {
   ProtvistaTrackConfig,
   TrackType,
 } from './config';
+import { validateConfig, formatConfigErrors } from './config-validator';
+import {
+  parseGoTo,
+  genomeToProtein,
+  selectCoordinate,
+  GnCoordinate,
+} from './utils/coordinate-navigation';
 
 import { TransformedInterPro } from './adapters/types/interpro';
 import { StructureFeature } from './adapters/structure-adapter';
@@ -121,6 +129,10 @@ async function callAdapter(
       return proteomicsAdapter(
         ...(raw as Parameters<typeof proteomicsAdapter>)
       );
+    case 'proteomics-coverage-adapter':
+      return proteomicsCoverageAdapter(
+        ...(raw as Parameters<typeof proteomicsCoverageAdapter>)
+      );
     case 'structure-adapter':
       return structureAdapter(...(raw as Parameters<typeof structureAdapter>));
     case 'variation-adapter':
@@ -188,6 +200,41 @@ class ProtvistaUniprot extends LitElement {
     variants: TransformedVariant[];
   };
   private config?: ProtvistaConfig;
+  private configSrc?: string;
+  private tooltip: {
+    visible: boolean;
+    title: string;
+    content: string;
+    x: number;
+    y: number;
+  } = { visible: false, title: '', content: '', x: 0, y: 0 };
+  private gotoError?: string;
+  private _genomicCoordinates?: Promise<GnCoordinate[] | undefined>;
+  // Data waiting to be pushed into a track element once it scrolls into
+  // view. Feeding a dense track is expensive (full re-process + draw), so
+  // offscreen tracks are deferred - the pattern EBI ships upstream as
+  // nightingale-scrollbox (ebi-webcomponents/nightingale#311).
+  private _pendingTrackData = new WeakMap<Element, unknown>();
+  private _trackVisibilityObserver?: IntersectionObserver;
+  // Categories that have been expanded at least once: their track elements
+  // stay mounted (hidden) on collapse so re-expanding is instant instead of
+  // re-processing all the data.
+  private everOpenedCategories = new Set<string>();
+  // Category opens deferred to the next frame that haven't fired yet; a
+  // close click in between removes the entry to cancel the expansion.
+  private _pendingCategoryOpens = new Set<string>();
+  // Tracks the exact data reference last pushed into each heatmap so
+  // _loadDataInComponents (which runs after every lit update) doesn't
+  // rebuild heatmaps that already display the current data.
+  private _assignedHeatmapData = new WeakMap<object, unknown>();
+  private _onOutsideClick = (e: MouseEvent) => {
+    // notooltip is checked here (not at listener registration) so toggling
+    // it at runtime behaves correctly without leaking/losing the listener
+    if (this.notooltip) return;
+    if (!(e.target as Element)?.closest?.('protvista-uniprot')) {
+      this._hideTooltip();
+    }
+  };
 
   constructor() {
     super();
@@ -208,6 +255,7 @@ class ProtvistaUniprot extends LitElement {
       data: { type: Object },
       openCategories: { type: Array },
       config: { type: Object },
+      configSrc: { type: String, attribute: 'config-src', reflect: true },
       notooltip: { type: Boolean, reflect: true },
       nostructure: { type: Boolean, reflect: true },
     };
@@ -234,6 +282,57 @@ class ProtvistaUniprot extends LitElement {
     loadComponent('nightingale-sequence-heatmap', NightingaleSequenceHeatmap);
   }
 
+  /**
+   * Mark that at least one endpoint returned usable data: dismisses the
+   * loader and fires the public protvista-event exactly once. Called as
+   * payloads arrive so that one slow endpoint (e.g. 85MB of variants for
+   * TITIN) never blanks the whole viewer.
+   */
+  _markDataAvailable() {
+    if (this.hasData) return;
+    this.hasData = true;
+    this.loading = false;
+    this.dispatchEvent(
+      new CustomEvent('protvista-event', {
+        detail: { hasData: true },
+        bubbles: true,
+      })
+    );
+    this.requestUpdate();
+  }
+
+  _onDataAvailable(payload: unknown) {
+    // Some endpoints return empty arrays, while most fail 🙄
+    if (payload && typeof payload === 'object' && 'features' in payload) {
+      const features = (payload as { features?: unknown[] }).features;
+      if (Array.isArray(features) && features.length > 0) {
+        this._markDataAvailable();
+      }
+    }
+  }
+
+  /**
+   * Availability check on transformed category data: covers payload shapes
+   * without a raw `features` array (AlphaFold confidence, InterPro,
+   * adapter-less Nightingale-native data, variants).
+   */
+  _onCategoryDataAssigned(assigned: unknown) {
+    if (
+      Array.isArray(assigned) &&
+      // `flat()` keeps `undefined` entries for tracks that returned nothing
+      assigned.some((item) => item != null)
+    ) {
+      this._markDataAvailable();
+    } else if (
+      assigned &&
+      typeof assigned === 'object' &&
+      Array.isArray((assigned as { variants?: unknown[] }).variants) &&
+      (assigned as { variants: unknown[] }).variants.length > 0
+    ) {
+      this._markDataAvailable();
+    }
+  }
+
   async _loadData() {
     const accession = this.accession;
     if (accession && this.config) {
@@ -242,39 +341,30 @@ class ProtvistaUniprot extends LitElement {
         tracks.flatMap(({ data }) => data[0].url)
       );
 
-      // Get the data for all urls and store it
-      this.rawData = await fetchAll([...new Set(urls)], (url: string) =>
-        url.replace('{accession}', accession)
+      // Kick off every fetch immediately, but do NOT await them as a batch:
+      // each category below only waits for its own urls, so fast tracks
+      // render while slow ones are still downloading.
+      const pending = new Map<string, Promise<unknown>>(
+        [...new Set(urls)].map((url) => [
+          url,
+          fetchOne(url.replace('{accession}', accession)).then((payload) => {
+            this.rawData[url] = payload as TrackPayload;
+            this._onDataAvailable(payload);
+            return payload;
+          }),
+        ])
       );
 
-      // Some endpoints return empty arrays, while most fail 🙄
-      const wasHasData = this.hasData;
-      this.hasData =
-        this.hasData ||
-        Object.values(this.rawData).some((d) => {
-          if (d && typeof d === 'object' && 'features' in d) {
-            const features = (d as { features?: unknown[] }).features;
-            return Array.isArray(features) && features.length > 0;
-          }
-          return false;
-        });
-
-      // Fire the public protvista-event the moment data first becomes
-      // available. (Previously this was hung off a `'load'` listener that
-      // never fired — see `connectedCallback` history.)
-      if (this.hasData && !wasHasData) {
-        this.dispatchEvent(
-          new CustomEvent('protvista-event', {
-            detail: { hasData: true },
-            bubbles: true,
-          })
-        );
-      }
-
       // Now iterate over tracks and categories, transforming the data
-      // and assigning it as adequate
-      for (const { name: categoryName, tracks, trackType } of this.config
-        .categories) {
+      // and assigning it as adequate. Categories are processed
+      // independently and rendered as soon as their own data arrives.
+      const categoryTasks = this.config.categories.map(async (category) => {
+        const { name: categoryName, tracks, trackType } = category;
+        // Wait only for the urls this category actually uses
+        const categoryUrls = new Set(
+          tracks.flatMap(({ data }) => data[0].url).flat()
+        );
+        await Promise.all([...categoryUrls].map((url) => pending.get(url)));
         const categoryData = await Promise.all(
           tracks.map(async ({ data: dataConfig, name: trackName, filter }) => {
             const { url, adapter } = dataConfig[0]; // TODO handle array
@@ -346,7 +436,20 @@ class ProtvistaUniprot extends LitElement {
           trackType === 'nightingale-colored-sequence'
             ? categoryData[0]
             : (categoryData.flat() as Record<string, unknown>[]);
-      }
+
+        this._onCategoryDataAssigned(this.data[categoryName]);
+
+        // Re-render now: this category is ready even if others are still
+        // fetching. `updated()` pushes the new data into the track elements.
+        this.requestUpdate();
+      });
+
+      await Promise.all(categoryTasks);
+
+      // Every category has been transformed into this.data; release the raw
+      // payloads (e.g. ~85MB of TITIN variation JSON) instead of pinning
+      // them in memory for the component's lifetime.
+      this.rawData = {};
     }
     this.loading = false;
     markOnce('protvista:data-loaded');
@@ -361,9 +464,9 @@ class ProtvistaUniprot extends LitElement {
   async _loadDataInComponents() {
     await frame();
     Object.entries(this.data).forEach(([id, data]) => {
-      const element: NightingaleTrackCanvas | null = document.getElementById(
-        `track-${id}`
-      ) as NightingaleTrackCanvas;
+      const element: NightingaleTrackCanvas | null = this.querySelector(
+        `#${CSS.escape(`track-${id}`)}`
+      );
 
       // set data if it hasn't changed
       if (element && element.data !== data) {
@@ -388,20 +491,22 @@ class ProtvistaUniprot extends LitElement {
           (dataAsArray.variants?.length ?? 0) > 0)
       ) {
         // Make category element visible
-        const categoryElt = document.getElementById(
-          `category_${currentCategory.name}`
+        const categoryElt = this.querySelector<HTMLElement>(
+          `#${CSS.escape(`category_${currentCategory.name}`)}`
         );
         if (categoryElt) {
           categoryElt.style.display = 'flex';
         }
         for (const track of currentCategory.tracks) {
-          const elementTrack = document.getElementById(
-            `track-${id}-${track.name}`
-          ) as NightingaleTrackCanvas | null;
-          if (elementTrack) {
-            elementTrack.data = this.data[
-              `${id}-${track.name}`
-            ] as NightingaleTrackCanvas['data'];
+          const elementTrack: NightingaleTrackCanvas | null =
+            this.querySelector(`#${CSS.escape(`track-${id}-${track.name}`)}`);
+          const trackData = this.data[`${id}-${track.name}`];
+          // Only assign when the data actually changed: setting `.data`
+          // makes the track re-process and redraw everything, which is very
+          // expensive for dense tracks (e.g. 240k+ variants for TITIN) and
+          // this method runs after every lit update.
+          if (elementTrack && elementTrack.data !== trackData) {
+            this._assignTrackDataWhenVisible(elementTrack, trackData);
           }
         }
       }
@@ -422,6 +527,14 @@ class ProtvistaUniprot extends LitElement {
                 yValue: string;
                 score: number;
               }[];
+              // setHeatmapData rebuilds the whole heatmap; skip if this
+              // exact data has already been pushed to this component.
+              if (
+                this._assignedHeatmapData.get(heatmapComponent) === heatmapData
+              ) {
+                continue;
+              }
+              this._assignedHeatmapData.set(heatmapComponent, heatmapData);
               const xDomain = Array.from(
                 { length: this.sequence.length },
                 (_, i) => i + 1
@@ -448,8 +561,194 @@ class ProtvistaUniprot extends LitElement {
     });
   }
 
+  _handleGoToSubmit(e: Event) {
+    e.preventDefault();
+    const input = (e.target as HTMLFormElement).elements.namedItem(
+      'goto'
+    ) as HTMLInputElement;
+    this.goTo(input.value);
+  }
+
+  _setGotoError(message?: string) {
+    this.gotoError = message;
+    this.requestUpdate();
+  }
+
+  /** Broadcast a view change through nightingale-manager */
+  _navigateTo(start: number, end: number, highlight?: string) {
+    const emitter = this.querySelector('nightingale-navigation');
+    if (!emitter) return;
+    this.displayCoordinates = { start, end };
+    emitter.dispatchEvent(
+      new CustomEvent('change', {
+        detail: {
+          displaystart: start,
+          displayend: end,
+          ...(highlight ? { highlight } : {}),
+        },
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+  }
+
+  /**
+   * Jump to a protein range ("188-198"), a residue with optional amino-acid
+   * validation ("185S"/"S185"), or a genomic coordinate mapped through the
+   * Proteins API coordinates payload ("g:21:25897620").
+   */
+  async goTo(rawQuery: string) {
+    const length = this.sequence?.length;
+    if (!length) return;
+    const target = parseGoTo(rawQuery);
+    if (!target) {
+      this._setGotoError(
+        `Couldn't understand "${rawQuery}". Try 188-198, 185S or g:21:25897620`
+      );
+      return;
+    }
+
+    if (target.kind === 'range') {
+      const start = Math.min(target.start, length);
+      const end = Math.min(target.end, length);
+      this._setGotoError(undefined);
+      this._navigateTo(start, end, `${start}:${end}`);
+      return;
+    }
+
+    let position: number;
+    if (target.kind === 'genomic') {
+      const coordinates = await this._loadGenomicCoordinates();
+      const coordinate = selectCoordinate(coordinates, target.chromosome);
+      const mapped = coordinate && genomeToProtein(coordinate, target.position);
+      if (!mapped) {
+        this._setGotoError(
+          `Genomic position ${target.position} doesn't map onto ${this.accession} (intron or outside the gene?)`
+        );
+        return;
+      }
+      position = mapped;
+    } else {
+      position = target.position;
+      if (position > length) {
+        this._setGotoError(
+          `Position ${position} is beyond the sequence (length ${length})`
+        );
+        return;
+      }
+      const actual = this.sequence?.charAt(position - 1).toUpperCase();
+      if (target.aa && actual !== target.aa) {
+        this._setGotoError(
+          `Residue ${position} is ${actual}, not ${target.aa}`
+        );
+        return;
+      }
+    }
+
+    const start = Math.max(1, position - 15);
+    const end = Math.min(length, position + 15);
+    this._setGotoError(undefined);
+    this._navigateTo(start, end, `${position}:${position}`);
+  }
+
+  _loadGenomicCoordinates(): Promise<GnCoordinate[] | undefined> {
+    if (!this._genomicCoordinates) {
+      this._genomicCoordinates = (async () => {
+        try {
+          const response = await fetch(
+            `https://www.ebi.ac.uk/proteins/api/coordinates/${this.accession}`,
+            // Without the explicit Accept header this endpoint returns XML
+            { headers: { Accept: 'application/json' } }
+          );
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const payload = (await response.json()) as {
+            gnCoordinate?: GnCoordinate[];
+          };
+          return payload.gnCoordinate;
+        } catch (e) {
+          console.error(
+            `Couldn't load genomic coordinates for ${this.accession}`,
+            e
+          );
+          return undefined;
+        }
+      })();
+    }
+    return this._genomicCoordinates;
+  }
+
+  /**
+   * Clear all per-protein state. Without this, switching the accession at
+   * runtime keeps showing the previous protein's tracks (and mixes them
+   * with the new protein's data as it arrives).
+   */
+  _resetViewerState() {
+    this.data = {};
+    this.rawData = {};
+    this.hasData = false;
+    this.loading = true;
+    this.sequence = undefined;
+    this.transformedVariants = { sequence: '', variants: [] };
+    this.openCategories = [];
+    this.everOpenedCategories.clear();
+    this._pendingCategoryOpens.clear();
+    this.tooltip = { ...this.tooltip, visible: false };
+    this.displayCoordinates = {};
+    this.gotoError = undefined;
+    this._genomicCoordinates = undefined;
+    // The open/closed arrow state is toggled imperatively via classList,
+    // so lit won't reset it on re-render
+    this.querySelectorAll('.category-label.open').forEach((el) =>
+      el.classList.remove('open')
+    );
+  }
+
+  /**
+   * Push data into a track element only once it is (nearly) visible.
+   * Expanding several categories mounts many tracks at once; without this,
+   * every one of them processes its full dataset immediately even though
+   * most are below the fold.
+   */
+  _assignTrackDataWhenVisible(element: NightingaleTrackCanvas, data: unknown) {
+    if (typeof IntersectionObserver === 'undefined') {
+      element.data = data as NightingaleTrackCanvas['data'];
+      return;
+    }
+    this._pendingTrackData.set(element, data);
+    if (!this._trackVisibilityObserver) {
+      this._trackVisibilityObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const pending = this._pendingTrackData.get(entry.target);
+            this._pendingTrackData.delete(entry.target);
+            this._trackVisibilityObserver?.unobserve(entry.target);
+            if (pending !== undefined) {
+              (entry.target as NightingaleTrackCanvas).data =
+                pending as NightingaleTrackCanvas['data'];
+            }
+          }
+        },
+        // Start loading slightly before the track scrolls into view
+        { rootMargin: '250px 0px' }
+      );
+    }
+    this._trackVisibilityObserver.observe(element);
+  }
+
   updated(changedProperties: Map<string, string>) {
     super.updated(changedProperties);
+
+    // React to runtime accession changes (get() returns the previous value;
+    // undefined means this is the initial set handled by connectedCallback)
+    if (
+      changedProperties.has('accession') &&
+      changedProperties.get('accession') !== undefined
+    ) {
+      this._resetViewerState();
+      this._init();
+      return;
+    }
 
     // First render with content — manager is in the DOM, not the loader.
     if (this.hasData && !this.loading) {
@@ -490,7 +789,10 @@ class ProtvistaUniprot extends LitElement {
     this._loadDataInComponents();
   }
 
-  _init() {
+  async _init() {
+    if (!this.config && this.configSrc) {
+      this.config = await this.loadExternalConfig(this.configSrc);
+    }
     if (!this.config) {
       this.config = config;
     }
@@ -519,7 +821,89 @@ class ProtvistaUniprot extends LitElement {
       if (e.detail?.displayend) {
         this.displayCoordinates.end = e.detail.displayend;
       }
+
+      if (!this.notooltip) {
+        if (e.detail?.eventType === 'click') {
+          this._updateTooltip(e);
+        } else if (!e.detail?.eventType || e.detail.eventType === 'reset') {
+          // Zoom/pan/reset: any open tooltip is now out of place
+          this._hideTooltip();
+        }
+      }
     });
+
+    document.addEventListener('click', this._onOutsideClick);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    document.removeEventListener('click', this._onOutsideClick);
+  }
+
+  _updateTooltip(e: NightingaleEvent) {
+    const feature = e.detail?.feature as
+      | {
+          type?: string;
+          start?: number | string;
+          end?: number | string;
+          tooltipContent?: string;
+        }
+      | undefined;
+    if (!feature?.tooltipContent) {
+      return;
+    }
+    const [pageX, pageY] = e.detail?.coords || [0, 0];
+    this.tooltip = {
+      visible: true,
+      title: `${feature.type || ''} ${feature.start || ''}-${feature.end || ''}`,
+      // Built by this package's tooltip formatters, which escape all
+      // external API data (see src/utils/security.ts)
+      content: feature.tooltipContent,
+      // coords are page-based; the tooltip is position:fixed, so convert
+      // to viewport coordinates
+      x: pageX - window.scrollX,
+      y: pageY - window.scrollY,
+    };
+    this.requestUpdate();
+  }
+
+  _hideTooltip() {
+    if (this.tooltip.visible) {
+      this.tooltip = { ...this.tooltip, visible: false };
+      this.requestUpdate();
+    }
+  }
+
+  /**
+   * Load a viewer configuration from a URL (set via the `config-src`
+   * attribute) and validate it against the published configuration contract
+   * (see schema/protvista-config.schema.json). On any failure the error is
+   * reported on the console and the viewer falls back to the built-in
+   * UniProt configuration.
+   */
+  async loadExternalConfig(url: string): Promise<ProtvistaConfig | undefined> {
+    let payload: unknown;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      payload = await response.json();
+    } catch (e) {
+      console.error(
+        `Couldn't load ProtVista configuration from "${url}", falling back to the default configuration`,
+        e
+      );
+      return undefined;
+    }
+    const result = validateConfig(payload);
+    if (!result.valid) {
+      console.error(
+        `Configuration loaded from "${url}" is invalid, falling back to the default configuration.\n${formatConfigErrors(result.errors)}`
+      );
+      return undefined;
+    }
+    return result.config;
   }
 
   async loadEntry(
@@ -561,6 +945,22 @@ class ProtvistaUniprot extends LitElement {
       <nightingale-manager
         reflected-attributes="length display-start display-end highlight activefilters filters"
       >
+        <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
+          <label for="protvista-goto-input">Go to</label>
+          <input
+            id="protvista-goto-input"
+            name="goto"
+            type="text"
+            placeholder="188-198 · 185S · g:21:25897620"
+            title="Jump to a residue range (188-198), a residue with amino-acid check (185S), or a genomic coordinate (g:<chromosome>:<position>)"
+          />
+          <button type="submit">Go</button>
+          ${this.gotoError
+            ? html`<span class="protvista-goto__error" role="alert"
+                >${this.gotoError}</span
+              >`
+            : ''}
+        </form>
         <div class="nav-container">
           <div class="nav-track-label"></div>
           <div class="track-content">
@@ -621,13 +1021,22 @@ class ProtvistaUniprot extends LitElement {
               <!-- Expanded Categories -->
               ${category.tracks &&
               category.tracks.map((track) => {
-                if (this.openCategories.includes(category.name)) {
+                const isOpen = this.openCategories.includes(category.name);
+                // Once a category has been expanded, keep its track elements
+                // mounted and merely hide them on collapse: re-mounting means
+                // Nightingale re-processes all the data from scratch, which
+                // is seconds of work for dense tracks (e.g. TITIN variants).
+                if (isOpen || this.everOpenedCategories.has(category.name)) {
                   const trackData = this.data[`${category.name}-${track.name}`];
                   return trackData &&
                     ((Array.isArray(trackData) && trackData.length) ||
                       Object.keys(trackData).length)
                     ? html`
-                        <div class="category__track" id="track_${track.name}">
+                        <div
+                          class="category__track"
+                          id="track_${track.name}"
+                          .style="${isOpen ? '' : 'display:none'}"
+                        >
                           <div class="track-label" title="${track.tooltip}">
                             ${(track.filterComponent &&
                               this.getFilterComponent(
@@ -675,12 +1084,19 @@ class ProtvistaUniprot extends LitElement {
               ${!category.tracks
                 ? (this.data[category.name] as { accession?: string }[]).map(
                     (item: { accession?: string }) => {
-                      if (this.openCategories.includes(category.name)) {
+                      const isOpen = this.openCategories.includes(
+                        category.name
+                      );
+                      if (
+                        isOpen ||
+                        this.everOpenedCategories.has(category.name)
+                      ) {
                         if (!item || !item.accession) return '';
                         return html`
                           <div
                             class="category__track"
                             id="track_${item.accession}"
+                            .style="${isOpen ? '' : 'display:none'}"
                           >
                             <div class="track-label" title="${item.accession}">
                               ${item.accession}
@@ -728,6 +1144,30 @@ class ProtvistaUniprot extends LitElement {
               ></protvista-uniprot-structure>
             `
           : ''}
+        ${!this.notooltip && this.tooltip.visible
+          ? html`
+              <div
+                class="protvista-uniprot-tooltip"
+                role="tooltip"
+                style="left: ${this.tooltip.x + 8}px; top: ${this.tooltip.y +
+                8}px"
+              >
+                <div class="protvista-uniprot-tooltip-header">
+                  <span>${this.tooltip.title}</span>
+                  <button
+                    type="button"
+                    aria-label="Close tooltip"
+                    @click="${this._hideTooltip}"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div class="protvista-uniprot-tooltip-body">
+                  ${unsafeHTML(this.tooltip.content)}
+                </div>
+              </div>
+            `
+          : ''}
       </nightingale-manager>
     `;
   }
@@ -742,10 +1182,27 @@ class ProtvistaUniprot extends LitElement {
     const toggle = target.getAttribute('data-category-toggle');
 
     if (toggle && !target.classList.contains('open')) {
+      // Flip the arrow synchronously, then defer mounting the expanded
+      // tracks until after the next paint: mounting Nightingale canvas
+      // elements for a dense category blocks the main thread, and without
+      // the deferral the click appears dead until the work finishes.
       target.classList.add('open');
-      this.openCategories = [...this.openCategories, toggle];
+      this._pendingCategoryOpens.add(toggle);
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          // A close click in the meantime cancels the pending expansion;
+          // without this check the deferred callback would force the
+          // category back open against the user's last action
+          if (!this._pendingCategoryOpens.delete(toggle)) return;
+          this.everOpenedCategories.add(toggle);
+          if (!this.openCategories.includes(toggle)) {
+            this.openCategories = [...this.openCategories, toggle];
+          }
+        }, 0);
+      });
     } else {
       target.classList.remove('open');
+      if (toggle) this._pendingCategoryOpens.delete(toggle);
       this.openCategories = [...this.openCategories].filter(
         (d) => d !== toggle
       );

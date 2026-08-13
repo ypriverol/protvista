@@ -15,6 +15,24 @@ export const loadComponent = (
   }
 };
 
+// Fetches and parses a single url; resolves to null on any failure so that
+// one slow or broken endpoint never rejects a whole batch.
+export const fetchOne = async (url: string): Promise<unknown> => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      // TODO handle this better based on error code
+      // Fail silently for now
+      console.warn(`HTTP error status: ${response.status} at ${url}`);
+      return null;
+    }
+    return await response.json();
+  } catch (error) {
+    console.warn(`Failed to fetch or parse JSON from ${url}:`, error);
+    return null; // or handle error data as needed
+  }
+};
+
 // Returns an object of the form url => payload json
 // getUrl optional function modifies url string
 export const fetchAll = async (
@@ -23,20 +41,6 @@ export const fetchAll = async (
 ) =>
   Object.fromEntries(
     await Promise.all(
-      urls.map(async (url) => {
-        try {
-          const response = await fetch(getUrl ? getUrl(url) : url);
-          if (!response.ok) {
-            // TODO handle this better based on error code
-            // Fail silently for now
-            console.warn(`HTTP error status: ${response.status} at ${url}`);
-            return [url, null];
-          }
-          return [url, await response.json()];
-        } catch (error) {
-          console.warn(`Failed to fetch or parse JSON from ${url}:`, error);
-          return [url, null]; // or handle error data as needed
-        }
-      })
+      urls.map(async (url) => [url, await fetchOne(getUrl ? getUrl(url) : url)])
     )
   );

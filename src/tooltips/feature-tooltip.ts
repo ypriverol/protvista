@@ -100,7 +100,11 @@ const formatSource = (source: EvidenceSource) => {
   if (source.name?.toLowerCase() === 'PubMed'.toLowerCase()) {
     return `${escapeHtml(source.id)}&nbsp;(<a href='${sanitizeUrl(source.url)}' target='_blank'>${escapeHtml(source.name)}</a>&nbsp;<a href='${sanitizeUrl(source.alternativeUrl)}' target='_blank'>EuropePMC</a>)`;
   }
-  const sourceLink = `&nbsp;<a href='${sanitizeUrl(source.url)}' target='_blank'>${escapeHtml(source.id)}</a>`;
+  // Some sources (e.g. MaxQB) come with an empty url; render plain text
+  // instead of a dead link pointing at the current page
+  const sourceLink = source.url
+    ? `&nbsp;<a href='${sanitizeUrl(source.url)}' target='_blank'>${escapeHtml(source.id)}</a>`
+    : `&nbsp;${escapeHtml(source.id)}`;
   if (source.name) {
     // Temporary until we get the expected value as 'PeptideAtlas' instead of 'HppPeptideAtlas'
     if (source.name.startsWith('Hpp')) {
@@ -214,8 +218,13 @@ const formatPTMPeptidoform = (peptide: string, ptms: PTMHighlight[]) => {
   return peptidoform;
 };
 
-const formatProformaWithLink = (proforma = '') => {
-  return proforma.replace(/\[([^\]]+)\]/g, (_, modification) => {
+export const formatProformaWithLink = (proforma = '') => {
+  // Escape the WHOLE string first: Proforma comes straight from the
+  // PTMeXchange API and anything outside (or inside) the brackets would
+  // otherwise be injected into the tooltip HTML verbatim. The linkifying
+  // replace below runs on the escaped text, and known modification names
+  // are plain alphanumerics so the escaped lookup key still matches.
+  return escapeHtml(proforma).replace(/\[([^\]]+)\]/g, (_, modification) => {
     const id =
       unimodIdMapping[
         modification.toLowerCase() as keyof typeof unimodIdMapping

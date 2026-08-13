@@ -11,8 +11,12 @@ const transformData = (data: ProteinsAPIVariation) => {
       start: variant.begin,
     }));
 
-    const total = new Uint8ClampedArray(data.sequence.length);
-    const diseaseTotal = new Uint8ClampedArray(data.sequence.length);
+    // Positions are 1-based and written at their own index, so the arrays
+    // need length + 1 slots: with only `length`, a variant on the LAST
+    // residue silently disappeared (out-of-range typed-array writes are
+    // no-ops).
+    const total = new Uint8ClampedArray(data.sequence.length + 1);
+    const diseaseTotal = new Uint8ClampedArray(data.sequence.length + 1);
 
     for (const { start, association } of variants) {
       const index = +start;

@@ -2,9 +2,11 @@ import { RnaEditing } from './types/rna-editing';
 
 const transformData = (data: RnaEditing) => {
   if (data.sequence && data.features.length) {
-    const total = new Uint8ClampedArray(data.sequence.length);
-    const missense = new Uint8ClampedArray(data.sequence.length);
-    const synonymous = new Uint8ClampedArray(data.sequence.length);
+    // Positions are 1-based and written at their own index; length + 1
+    // slots so an editing event on the last residue isn't silently dropped
+    const total = new Uint8ClampedArray(data.sequence.length + 1);
+    const missense = new Uint8ClampedArray(data.sequence.length + 1);
+    const synonymous = new Uint8ClampedArray(data.sequence.length + 1);
     for (const feature of data.features) {
       const index = +feature.locationType.position.position;
       const consequence = feature.variantType.consequenceType;
