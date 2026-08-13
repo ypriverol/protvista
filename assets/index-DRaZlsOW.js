@@ -6624,8 +6624,25 @@ void main() {
     line-height: normal;
   }
 
+  /*
+   * Colours follow the UniProt Franklin palette (measured from the
+   * uniprot.org production stylesheet):
+   *   sapphire-blue #014371 (site navbar), sea-blue #00639a (links),
+   *   platinum #e4e8eb (light rows), hover #f5f9fc.
+   * Each is overridable by integrators via custom properties.
+   */
+  protvista-uniprot {
+    --protvista-category-background: #014371;
+    --protvista-category-color: #fff;
+    --protvista-track-background: #e4e8eb;
+    --protvista-track-color: #1a1a1a;
+    --protvista-hover-background: #f5f9fc;
+    --protvista-link-color: #00639a;
+  }
+
   .category-label {
-    background-color: #b2f5ff;
+    background-color: var(--protvista-category-background);
+    color: var(--protvista-category-color);
     cursor: pointer;
   }
 
@@ -6636,7 +6653,7 @@ void main() {
     height: 0;
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
-    border-left: 5px solid #333;
+    border-left: 5px solid var(--protvista-category-color);
     margin-right: 5px;
     -webkit-transition: all 0.1s;
     /* Safari */
@@ -6651,16 +6668,27 @@ void main() {
     height: 0;
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
-    border-top: 5px solid #333;
+    border-top: 5px solid var(--protvista-category-color);
     margin-right: 5px;
   }
 
   .track-label {
-    background-color: #d9faff;
+    background-color: var(--protvista-track-background);
+    color: var(--protvista-track-color);
+  }
+
+  .track-label:hover {
+    background-color: var(--protvista-hover-background);
+  }
+
+  .track-label a,
+  .track-label a:link,
+  .track-label a:visited {
+    color: var(--protvista-link-color);
   }
 
   nightingale-track-canvas {
-    border-top: 1px solid #d9faff;
+    border-top: 1px solid var(--protvista-track-background);
   }
 
   nightingale-navigation {
@@ -6690,7 +6718,7 @@ void main() {
   .mod-link {
     white-space: nowrap;
   }
-`,Q9=e=>{performance.getEntriesByName(e,`mark`).length===0&&performance.mark(e)},$9=(e,t,n)=>{if(performance.getEntriesByName(e,`measure`).length===0)try{performance.measure(e,t,n)}catch{}};async function YAt(e,t){switch(e){case`feature-adapter`:return Kwt(...t);case`interpro-adapter`:return ykt(...t);case`proteomics-adapter`:return Jwt(...t);case`structure-adapter`:return iTt(...t);case`variation-adapter`:return lkt(...t);case`variation-graph-adapter`:return bkt(...t);case`rna-editing-adapter`:return Dkt(...t);case`rna-editing-graph-adapter`:return xkt(...t);case`proteomics-ptm-adapter`:return kkt(...t);case`alphafold-confidence-adapter`:return Mkt(...t);case`alphamissense-pathogenicity-adapter`:return Jkt(...t);case`alphamissense-heatmap-adapter`:return Zkt(...t);default:throw Error(`Unknown adapter: ${e}`)}}var XAt=class extends Ne{constructor(){super(),this.data={},this.rawData={},this.displayCoordinates={},this.tooltip={visible:!1,title:``,content:``,x:0,y:0},this._assignedHeatmapData=new WeakMap,this._onOutsideClick=e=>{e.target?.closest?.(`protvista-uniprot`)||this._hideTooltip()},this.openCategories=[],this.nostructure=!1,this.hasData=!1,this.loading=!0,this.displayCoordinates={},this.transformedVariants={sequence:``,variants:[]},this.addStyles()}static get properties(){return{suspend:{type:Boolean,reflect:!0},accession:{type:String,reflect:!0},sequence:{type:String},data:{type:Object},openCategories:{type:Array},config:{type:Object},configSrc:{type:String,attribute:`config-src`,reflect:!0},notooltip:{type:Boolean,reflect:!0},nostructure:{type:Boolean,reflect:!0}}}addStyles(){let e=document.createElement(`style`);e.textContent=`${JAt.toString()} ${hAt.toString()}`,document.querySelector(`head`)?.append(e)}registerWebComponents(){v7(`nightingale-navigation`,Gre),v7(`nightingale-track-canvas`,Tme),v7(`nightingale-colored-sequence`,pce),v7(`nightingale-interpro-track`,H_e),v7(`nightingale-sequence`,Woe),v7(`nightingale-variation-canvas`,SSe),v7(`nightingale-linegraph-track`,wEe),v7(`nightingale-filter`,DHe),v7(`nightingale-manager`,os),v7(`protvista-uniprot-structure`,OAt),v7(`nightingale-sequence-heatmap`,DBe)}_markDataAvailable(){this.hasData||(this.hasData=!0,this.loading=!1,this.dispatchEvent(new CustomEvent(`protvista-event`,{detail:{hasData:!0},bubbles:!0})),this.requestUpdate())}_onDataAvailable(e){if(e&&typeof e==`object`&&`features`in e){let t=e.features;Array.isArray(t)&&t.length>0&&this._markDataAvailable()}}_onCategoryDataAssigned(e){(Array.isArray(e)&&e.some(e=>e!=null)||e&&typeof e==`object`&&Array.isArray(e.variants)&&e.variants.length>0)&&this._markDataAvailable()}async _loadData(){let e=this.accession;if(e&&this.config){let t=this.config.categories.flatMap(({tracks:e})=>e.flatMap(({data:e})=>e[0].url)),n=new Map([...new Set(t)].map(t=>[t,vwt(t.replace(`{accession}`,e)).then(e=>(this.rawData[t]=e,this._onDataAvailable(e),e))])),r=this.config.categories.map(async e=>{let{name:t,tracks:r,trackType:i}=e,a=new Set(r.flatMap(({data:e})=>e[0].url).flat());await Promise.all([...a].map(e=>n.get(e)));let o=await Promise.all(r.map(async({data:e,name:n,filter:r})=>{let{url:i,adapter:a}=e[0],o=(Array.isArray(i)?i:[i]).map(e=>this.rawData[e]||[]);if(!o||a===`variation-adapter`&&Array.isArray(o[0])&&o[0].length===0)return;let s=a?await YAt(a,o):o;if(a===`interpro-adapter`){let e=[];s?.forEach(t=>{t.locations?.forEach(n=>{n.representative&&n.fragments?.forEach(n=>{e.push({...t,type:`InterPro Representative Domain`,start:n.start,end:n.end})})})}),s=e}let c=Array.isArray(s)&&r?s.filter(({type:e})=>e===r):s;if(c)return this.data[`${t}-${n}`]=c,n===`variation`&&(this.transformedVariants=c),c}));this.data[t]=i===`nightingale-linegraph-track`||i===`nightingale-colored-sequence`?o[0]:o.flat(),this._onCategoryDataAssigned(this.data[t]),this.requestUpdate()});await Promise.all(r)}this.loading=!1,Q9(`protvista:data-loaded`),$9(`protvista:fetch-and-parse`,`protvista:script-start`,`protvista:data-loaded`),this.requestUpdate()}async _loadDataInComponents(){await $e(),Object.entries(this.data).forEach(([e,t])=>{let n=document.getElementById(`track-${e}`);n&&n.data!==t&&(n.data=t);let r=this.config?.categories.find(({name:t})=>t===e),i=t;if(r&&r.tracks&&i&&((i.length??0)>0||(i.variants?.length??0)>0)){let t=document.getElementById(`category_${r.name}`);t&&(t.style.display=`flex`);for(let t of r.tracks){let n=document.getElementById(`track-${e}-${t.name}`),r=this.data[`${e}-${t.name}`];n&&n.data!==r&&(n.data=r)}}if(r?.name===`ALPHAMISSENSE_PATHOGENICITY`&&r.tracks){for(let t of r.tracks)if(t.trackType===`nightingale-sequence-heatmap`){let n=this.querySelector(`nightingale-sequence-heatmap`);if(n&&this.sequence){let r=this.data[`${e}-${t.name}`];if(this._assignedHeatmapData.get(n)===r)continue;this._assignedHeatmapData.set(n,r);let i=Array.from({length:this.sequence.length},(e,t)=>t+1),a=[...new Set(r.map(e=>e.yValue))];n.setHeatmapData(i,a,r),n.updateComplete.then(()=>{n.heatmapInstance?.setColor(e=>ewt(e.score))})}}}})}updated(e){super.updated(e),this.hasData&&!this.loading&&(Q9(`protvista:first-render`),$9(`protvista:render`,`protvista:data-loaded`,`protvista:first-render`),$9(`protvista:total`,`protvista:script-start`,`protvista:first-render`));let t=this.querySelector(`nightingale-filter`);t&&t.filters!==U9&&(t.filters=U9);let n=this.querySelector(`nightingale-variation-canvas`);if(n&&n?.colorConfig!==jAt&&(n.colorConfig=jAt),e.has(`suspend`)){if(this.suspend)return;this._init()}this._loadDataInComponents()}async _init(){!this.config&&this.configSrc&&(this.config=await this.loadExternalConfig(this.configSrc)),this.config||=PAt,this.accession&&(this.loadEntry(this.accession).then(e=>{e&&(this.sequence=e.sequence.sequence,this.displayCoordinates={start:1,end:this.sequence?.length})}),this._loadData())}connectedCallback(){super.connectedCallback(),Q9(`protvista:script-start`),this.registerWebComponents(),this.suspend||this._init(),this.addEventListener(`change`,e=>{e.detail?.displaystart&&(this.displayCoordinates.start=e.detail.displaystart),e.detail?.displayend&&(this.displayCoordinates.end=e.detail.displayend),this.notooltip||(e.detail?.eventType===`click`?this._updateTooltip(e):(!e.detail?.eventType||e.detail.eventType===`reset`)&&this._hideTooltip())}),this.notooltip||document.addEventListener(`click`,this._onOutsideClick)}disconnectedCallback(){super.disconnectedCallback(),document.removeEventListener(`click`,this._onOutsideClick)}_updateTooltip(e){let t=e.detail?.feature;if(!t?.tooltipContent)return;let[n,r]=e.detail?.coords||[0,0];this.tooltip={visible:!0,title:`${t.type||``} ${t.start||``}-${t.end||``}`,content:t.tooltipContent,x:n-window.scrollX,y:r-window.scrollY},this.requestUpdate()}_hideTooltip(){this.tooltip.visible&&(this.tooltip={...this.tooltip,visible:!1},this.requestUpdate())}async loadExternalConfig(e){let t;try{let n=await fetch(e);if(!n.ok)throw Error(`HTTP ${n.status} for ${e}`);t=await n.json()}catch(t){console.error(`Couldn't load ProtVista configuration from "${e}", falling back to the default configuration`,t);return}let n=KAt(t);if(!n.valid){console.error(`Configuration loaded from "${e}" is invalid, falling back to the default configuration.\n${qAt(n.errors)}`);return}return n.config}async loadEntry(e){try{return await(await fetch(`https://www.ebi.ac.uk/proteins/api/proteins/${e}`)).json()}catch(e){console.error(`Couldn't load UniProt entry`,e);return}}createRenderRoot(){return this}render(){return!this.sequence||!this.config||this.suspend?fe``:this.loading?fe`<div class="protvista-loader">
+`,Q9=e=>{performance.getEntriesByName(e,`mark`).length===0&&performance.mark(e)},$9=(e,t,n)=>{if(performance.getEntriesByName(e,`measure`).length===0)try{performance.measure(e,t,n)}catch{}};async function YAt(e,t){switch(e){case`feature-adapter`:return Kwt(...t);case`interpro-adapter`:return ykt(...t);case`proteomics-adapter`:return Jwt(...t);case`structure-adapter`:return iTt(...t);case`variation-adapter`:return lkt(...t);case`variation-graph-adapter`:return bkt(...t);case`rna-editing-adapter`:return Dkt(...t);case`rna-editing-graph-adapter`:return xkt(...t);case`proteomics-ptm-adapter`:return kkt(...t);case`alphafold-confidence-adapter`:return Mkt(...t);case`alphamissense-pathogenicity-adapter`:return Jkt(...t);case`alphamissense-heatmap-adapter`:return Zkt(...t);default:throw Error(`Unknown adapter: ${e}`)}}var XAt=class extends Ne{constructor(){super(),this.data={},this.rawData={},this.displayCoordinates={},this.tooltip={visible:!1,title:``,content:``,x:0,y:0},this.everOpenedCategories=new Set,this._assignedHeatmapData=new WeakMap,this._onOutsideClick=e=>{e.target?.closest?.(`protvista-uniprot`)||this._hideTooltip()},this.openCategories=[],this.nostructure=!1,this.hasData=!1,this.loading=!0,this.displayCoordinates={},this.transformedVariants={sequence:``,variants:[]},this.addStyles()}static get properties(){return{suspend:{type:Boolean,reflect:!0},accession:{type:String,reflect:!0},sequence:{type:String},data:{type:Object},openCategories:{type:Array},config:{type:Object},configSrc:{type:String,attribute:`config-src`,reflect:!0},notooltip:{type:Boolean,reflect:!0},nostructure:{type:Boolean,reflect:!0}}}addStyles(){let e=document.createElement(`style`);e.textContent=`${JAt.toString()} ${hAt.toString()}`,document.querySelector(`head`)?.append(e)}registerWebComponents(){v7(`nightingale-navigation`,Gre),v7(`nightingale-track-canvas`,Tme),v7(`nightingale-colored-sequence`,pce),v7(`nightingale-interpro-track`,H_e),v7(`nightingale-sequence`,Woe),v7(`nightingale-variation-canvas`,SSe),v7(`nightingale-linegraph-track`,wEe),v7(`nightingale-filter`,DHe),v7(`nightingale-manager`,os),v7(`protvista-uniprot-structure`,OAt),v7(`nightingale-sequence-heatmap`,DBe)}_markDataAvailable(){this.hasData||(this.hasData=!0,this.loading=!1,this.dispatchEvent(new CustomEvent(`protvista-event`,{detail:{hasData:!0},bubbles:!0})),this.requestUpdate())}_onDataAvailable(e){if(e&&typeof e==`object`&&`features`in e){let t=e.features;Array.isArray(t)&&t.length>0&&this._markDataAvailable()}}_onCategoryDataAssigned(e){(Array.isArray(e)&&e.some(e=>e!=null)||e&&typeof e==`object`&&Array.isArray(e.variants)&&e.variants.length>0)&&this._markDataAvailable()}async _loadData(){let e=this.accession;if(e&&this.config){let t=this.config.categories.flatMap(({tracks:e})=>e.flatMap(({data:e})=>e[0].url)),n=new Map([...new Set(t)].map(t=>[t,vwt(t.replace(`{accession}`,e)).then(e=>(this.rawData[t]=e,this._onDataAvailable(e),e))])),r=this.config.categories.map(async e=>{let{name:t,tracks:r,trackType:i}=e,a=new Set(r.flatMap(({data:e})=>e[0].url).flat());await Promise.all([...a].map(e=>n.get(e)));let o=await Promise.all(r.map(async({data:e,name:n,filter:r})=>{let{url:i,adapter:a}=e[0],o=(Array.isArray(i)?i:[i]).map(e=>this.rawData[e]||[]);if(!o||a===`variation-adapter`&&Array.isArray(o[0])&&o[0].length===0)return;let s=a?await YAt(a,o):o;if(a===`interpro-adapter`){let e=[];s?.forEach(t=>{t.locations?.forEach(n=>{n.representative&&n.fragments?.forEach(n=>{e.push({...t,type:`InterPro Representative Domain`,start:n.start,end:n.end})})})}),s=e}let c=Array.isArray(s)&&r?s.filter(({type:e})=>e===r):s;if(c)return this.data[`${t}-${n}`]=c,n===`variation`&&(this.transformedVariants=c),c}));this.data[t]=i===`nightingale-linegraph-track`||i===`nightingale-colored-sequence`?o[0]:o.flat(),this._onCategoryDataAssigned(this.data[t]),this.requestUpdate()});await Promise.all(r)}this.loading=!1,Q9(`protvista:data-loaded`),$9(`protvista:fetch-and-parse`,`protvista:script-start`,`protvista:data-loaded`),this.requestUpdate()}async _loadDataInComponents(){await $e(),Object.entries(this.data).forEach(([e,t])=>{let n=document.getElementById(`track-${e}`);n&&n.data!==t&&(n.data=t);let r=this.config?.categories.find(({name:t})=>t===e),i=t;if(r&&r.tracks&&i&&((i.length??0)>0||(i.variants?.length??0)>0)){let t=document.getElementById(`category_${r.name}`);t&&(t.style.display=`flex`);for(let t of r.tracks){let n=document.getElementById(`track-${e}-${t.name}`),r=this.data[`${e}-${t.name}`];n&&n.data!==r&&(n.data=r)}}if(r?.name===`ALPHAMISSENSE_PATHOGENICITY`&&r.tracks){for(let t of r.tracks)if(t.trackType===`nightingale-sequence-heatmap`){let n=this.querySelector(`nightingale-sequence-heatmap`);if(n&&this.sequence){let r=this.data[`${e}-${t.name}`];if(this._assignedHeatmapData.get(n)===r)continue;this._assignedHeatmapData.set(n,r);let i=Array.from({length:this.sequence.length},(e,t)=>t+1),a=[...new Set(r.map(e=>e.yValue))];n.setHeatmapData(i,a,r),n.updateComplete.then(()=>{n.heatmapInstance?.setColor(e=>ewt(e.score))})}}}})}updated(e){super.updated(e),this.hasData&&!this.loading&&(Q9(`protvista:first-render`),$9(`protvista:render`,`protvista:data-loaded`,`protvista:first-render`),$9(`protvista:total`,`protvista:script-start`,`protvista:first-render`));let t=this.querySelector(`nightingale-filter`);t&&t.filters!==U9&&(t.filters=U9);let n=this.querySelector(`nightingale-variation-canvas`);if(n&&n?.colorConfig!==jAt&&(n.colorConfig=jAt),e.has(`suspend`)){if(this.suspend)return;this._init()}this._loadDataInComponents()}async _init(){!this.config&&this.configSrc&&(this.config=await this.loadExternalConfig(this.configSrc)),this.config||=PAt,this.accession&&(this.loadEntry(this.accession).then(e=>{e&&(this.sequence=e.sequence.sequence,this.displayCoordinates={start:1,end:this.sequence?.length})}),this._loadData())}connectedCallback(){super.connectedCallback(),Q9(`protvista:script-start`),this.registerWebComponents(),this.suspend||this._init(),this.addEventListener(`change`,e=>{e.detail?.displaystart&&(this.displayCoordinates.start=e.detail.displaystart),e.detail?.displayend&&(this.displayCoordinates.end=e.detail.displayend),this.notooltip||(e.detail?.eventType===`click`?this._updateTooltip(e):(!e.detail?.eventType||e.detail.eventType===`reset`)&&this._hideTooltip())}),this.notooltip||document.addEventListener(`click`,this._onOutsideClick)}disconnectedCallback(){super.disconnectedCallback(),document.removeEventListener(`click`,this._onOutsideClick)}_updateTooltip(e){let t=e.detail?.feature;if(!t?.tooltipContent)return;let[n,r]=e.detail?.coords||[0,0];this.tooltip={visible:!0,title:`${t.type||``} ${t.start||``}-${t.end||``}`,content:t.tooltipContent,x:n-window.scrollX,y:r-window.scrollY},this.requestUpdate()}_hideTooltip(){this.tooltip.visible&&(this.tooltip={...this.tooltip,visible:!1},this.requestUpdate())}async loadExternalConfig(e){let t;try{let n=await fetch(e);if(!n.ok)throw Error(`HTTP ${n.status} for ${e}`);t=await n.json()}catch(t){console.error(`Couldn't load ProtVista configuration from "${e}", falling back to the default configuration`,t);return}let n=KAt(t);if(!n.valid){console.error(`Configuration loaded from "${e}" is invalid, falling back to the default configuration.\n${qAt(n.errors)}`);return}return n.config}async loadEntry(e){try{return await(await fetch(`https://www.ebi.ac.uk/proteins/api/proteins/${e}`)).json()}catch(e){console.error(`Couldn't load UniProt entry`,e);return}}createRenderRoot(){return this}render(){return!this.sequence||!this.config||this.suspend?fe``:this.loading?fe`<div class="protvista-loader">
         ${pe`${We(mAt)}`}
       </div>`:this.hasData?fe`
       <nightingale-manager
@@ -6735,8 +6763,12 @@ void main() {
               </div>
 
               <!-- Expanded Categories -->
-              ${e.tracks&&e.tracks.map(t=>{if(this.openCategories.includes(e.name)){let n=this.data[`${e.name}-${t.name}`];return n&&(Array.isArray(n)&&n.length||Object.keys(n).length)?fe`
-                        <div class="category__track" id="track_${t.name}">
+              ${e.tracks&&e.tracks.map(t=>{let n=this.openCategories.includes(e.name);if(n||this.everOpenedCategories.has(e.name)){let r=this.data[`${e.name}-${t.name}`];return r&&(Array.isArray(r)&&r.length||Object.keys(r).length)?fe`
+                        <div
+                          class="category__track"
+                          id="track_${t.name}"
+                          .style="${n?``:`display:none`}"
+                        >
                           <div class="track-label" title="${t.tooltip}">
                             ${t.filterComponent&&this.getFilterComponent(`${e.name}-${t.name}`)||t.labelUrl&&this.accession&&fe`<a
                                 target="_blank"
@@ -6755,10 +6787,11 @@ void main() {
                           </div>
                         </div>
                       `:``}})}
-              ${e.tracks?``:this.data[e.name].map(t=>{if(this.openCategories.includes(e.name))return!t||!t.accession?``:fe`
+              ${e.tracks?``:this.data[e.name].map(t=>{let n=this.openCategories.includes(e.name);if(n||this.everOpenedCategories.has(e.name))return!t||!t.accession?``:fe`
                           <div
                             class="category__track"
                             id="track_${t.accession}"
+                            .style="${n?``:`display:none`}"
                           >
                             <div class="track-label" title="${t.accession}">
                               ${t.accession}
@@ -6815,7 +6848,7 @@ void main() {
       </nightingale-manager>
     `:fe`<div class="protvista-no-results">
         No feature data available for ${this.accession}
-      </div>`}handleCategoryClick(e){let t=e.target;t instanceof HTMLSpanElement&&(t=t.parentElement);let n=t.getAttribute(`data-category-toggle`);n&&!t.classList.contains(`open`)?(t.classList.add(`open`),this.openCategories=[...this.openCategories,n]):(t.classList.remove(`open`),this.openCategories=[...this.openCategories].filter(e=>e!==n))}groupByCategory(e,t){return e?.filter(e=>e.type.name===t)}getFilter(e,t){return e?.filter(e=>e.name===t)?.[0]}handleFilterClick(e){let t=e.target,n=this.groupByCategory(t.filters,`consequence`),r=this.groupByCategory(t.filters,`provenance`),i=e.detail?.value;if(i){let e=i.map(e=>this.getFilter(n,e)).filter(Boolean),t=i.map(e=>this.getFilter(r,e)).filter(Boolean),a=this.transformedVariants?.variants?.filter(t=>e.some(e=>e.filterPredicate(t))).filter(e=>t.some(t=>t.filterPredicate(e))),o=this.data[`VARIATION-variation`];this.data[`VARIATION-variation`]={...o&&typeof o==`object`&&!Array.isArray(o)?o:{},variants:a},this._loadDataInComponents()}}getCategoryTypesAsString(e){return e.map(e=>e.filter).join(`,`)}getFilterComponent(e){return fe`
+      </div>`}handleCategoryClick(e){let t=e.target;t instanceof HTMLSpanElement&&(t=t.parentElement);let n=t.getAttribute(`data-category-toggle`);n&&!t.classList.contains(`open`)?(t.classList.add(`open`),this.openCategories=[...this.openCategories,n],this.everOpenedCategories.add(n)):(t.classList.remove(`open`),this.openCategories=[...this.openCategories].filter(e=>e!==n))}groupByCategory(e,t){return e?.filter(e=>e.type.name===t)}getFilter(e,t){return e?.filter(e=>e.name===t)?.[0]}handleFilterClick(e){let t=e.target,n=this.groupByCategory(t.filters,`consequence`),r=this.groupByCategory(t.filters,`provenance`),i=e.detail?.value;if(i){let e=i.map(e=>this.getFilter(n,e)).filter(Boolean),t=i.map(e=>this.getFilter(r,e)).filter(Boolean),a=this.transformedVariants?.variants?.filter(t=>e.some(e=>e.filterPredicate(t))).filter(e=>t.some(t=>t.filterPredicate(e))),o=this.data[`VARIATION-variation`];this.data[`VARIATION-variation`]={...o&&typeof o==`object`&&!Array.isArray(o)?o:{},variants:a},this._loadDataInComponents()}}getCategoryTypesAsString(e){return e.map(e=>e.filter).join(`,`)}getFilterComponent(e){return fe`
       <nightingale-filter
         style="minWidth: 20%"
         for="track-${e}"
