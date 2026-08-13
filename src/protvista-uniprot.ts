@@ -52,6 +52,7 @@ import {
   selectCoordinate,
   GnCoordinate,
 } from './utils/coordinate-navigation';
+import { buildHighlight } from './utils/structure-highlight';
 
 import { TransformedInterPro } from './adapters/types/interpro';
 import { StructureFeature } from './adapters/structure-adapter';
@@ -209,6 +210,10 @@ class ProtvistaUniprot extends LitElement {
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
   private gotoError?: string;
+  // Track keys ("CATEGORY-track") whose features are currently highlighted
+  // on the 3D structure (and across all tracks) as a group
+  private structureHighlightTracks = new Set<string>();
+  private _structureGroupHighlight = '';
   private _genomicCoordinates?: Promise<GnCoordinate[] | undefined>;
   // Data waiting to be pushed into a track element once it scrolls into
   // view. Feeding a dense track is expensive (full re-process + draw), so
@@ -561,6 +566,43 @@ class ProtvistaUniprot extends LitElement {
     });
   }
 
+  _toggleStructureHighlight(trackKey: string, enabled: boolean) {
+    if (enabled) {
+      this.structureHighlightTracks.add(trackKey);
+    } else {
+      this.structureHighlightTracks.delete(trackKey);
+    }
+    const { highlight, truncated } = buildHighlight(
+      [...this.structureHighlightTracks].map((key) => this.data[key])
+    );
+    if (truncated) {
+      console.warn(
+        'Too many feature intervals selected for structure highlighting; showing the first 500'
+      );
+    }
+    // Broadcast through the manager so the ruler and every 1D track sync
+    const emitter = this.querySelector('nightingale-navigation');
+    emitter?.dispatchEvent(
+      new CustomEvent('change', {
+        detail: { highlight },
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    // nightingale-structure does NOT register with the manager; the
+    // highlight is passed down declaratively through
+    // protvista-uniprot-structure (see render), which keeps it applied
+    // even when the user switches to a different structure afterwards
+    this._structureGroupHighlight = highlight;
+    this.requestUpdate();
+  }
+
+  _handleStructureToggle(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const trackKey = input.dataset.trackKey;
+    if (trackKey) this._toggleStructureHighlight(trackKey, input.checked);
+  }
+
   _handleGoToSubmit(e: Event) {
     e.preventDefault();
     const input = (e.target as HTMLFormElement).elements.namedItem(
@@ -696,6 +738,8 @@ class ProtvistaUniprot extends LitElement {
     this.displayCoordinates = {};
     this.gotoError = undefined;
     this._genomicCoordinates = undefined;
+    this.structureHighlightTracks.clear();
+    this._structureGroupHighlight = '';
     // The open/closed arrow state is toggled imperatively via classList,
     // so lit won't reset it on re-render
     this.querySelectorAll('.category-label.open').forEach((el) =>
@@ -1057,6 +1101,20 @@ class ProtvistaUniprot extends LitElement {
                                   >${track.label}</span
                                 >`
                               : track.label)}
+                            ${!this.nostructure
+                              ? html`<label
+                                  class="structure-toggle"
+                                  title="Highlight all features of this track on the 3D structure (and across all tracks)"
+                                  ><input
+                                    type="checkbox"
+                                    data-track-key="${category.name}-${track.name}"
+                                    .checked=${this.structureHighlightTracks.has(
+                                      `${category.name}-${track.name}`
+                                    )}
+                                    @change="${this._handleStructureToggle}"
+                                  />3D</label
+                                >`
+                              : ''}
                           </div>
                           <div
                             class="track-content"
@@ -1141,6 +1199,7 @@ class ProtvistaUniprot extends LitElement {
           ? html`
               <protvista-uniprot-structure
                 accession="${this.accession || ''}"
+                .highlight=${this._structureGroupHighlight}
               ></protvista-uniprot-structure>
             `
           : ''}
