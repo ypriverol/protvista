@@ -35,6 +35,7 @@ export type ProtvistaTrackConfig = {
       | 'feature-adapter'
       | 'structure-adapter'
       | 'proteomics-adapter'
+      | 'proteomics-coverage-adapter'
       | 'variation-adapter'
       | 'variation-graph-adapter'
       | 'interpro-adapter'
@@ -749,6 +750,28 @@ const config: ProtvistaConfig = {
           ],
           tooltip:
             'RNA editing events leading to one or more amino acid changes compared to the translation of the non-edited RNA version.',
+        },
+      ],
+    },
+    {
+      name: 'PEPTIDE_COVERAGE',
+      label: 'Peptide coverage',
+      trackType: 'nightingale-linegraph-track',
+      helpPage:
+        'proteomics#1-data-from-public-mass-spectrometry-based-proteomics-resources',
+      tracks: [
+        {
+          name: 'peptide_coverage',
+          label: 'Coverage depth',
+          trackType: 'nightingale-linegraph-track',
+          data: [
+            {
+              adapter: 'proteomics-coverage-adapter',
+              url: `${proteinsApiServices.nonPtm}{accession}`,
+            },
+          ],
+          tooltip:
+            'Number of peptides from public mass-spectrometry resources covering each residue (grey: all peptides, blue: peptides unique to this protein). Summary view of the Proteomics category below.',
         },
       ],
     },

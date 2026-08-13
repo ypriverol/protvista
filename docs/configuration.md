@@ -131,6 +131,7 @@ Key points:
 | `variation-graph-adapter`             | Proteins API variation (aggregated into counts)                                       |
 | `structure-adapter`                   | PDBe best structures / UniProt cross-references                                       |
 | `proteomics-adapter`                  | Proteins API proteomics (peptides)                                                    |
+| `proteomics-coverage-adapter`         | Proteins API proteomics, aggregated to per-residue coverage depth                     |
 | `proteomics-ptm-adapter`              | Proteins API PTM proteomics (PTMeXchange)                                             |
 | `interpro-adapter`                    | InterPro API entry payload                                                            |
 | `alphafold-confidence-adapter`        | AlphaFold API confidence payload                                                      |

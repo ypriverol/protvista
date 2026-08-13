@@ -24,6 +24,7 @@ export const ADAPTERS = [
   'feature-adapter',
   'structure-adapter',
   'proteomics-adapter',
+  'proteomics-coverage-adapter',
   'variation-adapter',
   'variation-graph-adapter',
   'interpro-adapter',

@@ -21,6 +21,7 @@ import { amColorScale } from '@nightingale-elements/nightingale-structure';
 // adapters
 import featureAdapter from './adapters/feature-adapter';
 import proteomicsAdapter from './adapters/proteomics-adapter';
+import proteomicsCoverageAdapter from './adapters/proteomics-coverage-adapter';
 import structureAdapter from './adapters/structure-adapter';
 import variationAdapter, {
   TransformedVariant,
@@ -121,6 +122,10 @@ async function callAdapter(
     case 'proteomics-adapter':
       return proteomicsAdapter(
         ...(raw as Parameters<typeof proteomicsAdapter>)
+      );
+    case 'proteomics-coverage-adapter':
+      return proteomicsCoverageAdapter(
+        ...(raw as Parameters<typeof proteomicsCoverageAdapter>)
       );
     case 'structure-adapter':
       return structureAdapter(...(raw as Parameters<typeof structureAdapter>));
