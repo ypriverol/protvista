@@ -29,6 +29,33 @@ const check = (name, ok, detail = '') =>
 const browser = await chromium.launch({ args: ['--disable-http2'] });
 const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 page.on('pageerror', (e) => consoleErrors.push('PAGEERROR: ' + e.message));
+page.on('console', (m) => {
+  if (m.type() === 'error' || m.type() === 'warning') {
+    consoleErrors.push(`[${m.type()}] ${m.text().slice(0, 300)}`);
+  }
+});
+page.on('requestfailed', (r) =>
+  consoleErrors.push(`[requestfailed] ${r.url().slice(0, 120)} ${r.failure()?.errorText}`)
+);
+
+// On any hard failure (e.g. the viewer never renders), dump everything we
+// know instead of dying with a bare TimeoutError
+const bail = async (stage, error) => {
+  console.log(`FATAL at stage "${stage}": ${error.message.split('\n')[0]}`);
+  console.log(results.join('\n'));
+  console.log(
+    `\nBrowser console/network (${consoleErrors.length}):\n` +
+      [...new Set(consoleErrors)].slice(0, 20).join('\n')
+  );
+  try {
+    await page.screenshot({ path: 'e2e-failure.png', fullPage: true });
+    console.log('screenshot saved to e2e-failure.png');
+  } catch {
+    /* page may be gone */
+  }
+  await browser.close();
+  process.exit(1);
+};
 
 if (process.env.E2E_PROXY) {
   await page.route(
@@ -55,11 +82,15 @@ if (process.env.E2E_PROXY) {
   );
 }
 
-await page.goto(`${BASE}/?accession=P05067`, {
-  waitUntil: 'domcontentloaded',
-});
-await page.waitForSelector('.category-label', { timeout: 90000 });
-await page.waitForSelector('nightingale-structure', { timeout: 60000 });
+try {
+  await page.goto(`${BASE}/?accession=P05067`, {
+    waitUntil: 'domcontentloaded',
+  });
+  await page.waitForSelector('.category-label', { timeout: 90000 });
+  await page.waitForSelector('nightingale-structure', { timeout: 60000 });
+} catch (error) {
+  await bail('initial render', error);
+}
 await page.waitForTimeout(3000);
 
 // ---------- Go-to box ----------

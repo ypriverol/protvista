@@ -33,3 +33,11 @@ jobs:
 
       - name: Run smoke tests
         run: node e2e/smoke.mjs http://localhost:4573
+
+      - name: Upload failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failure
+          path: e2e-failure.png
+          if-no-files-found: ignore
