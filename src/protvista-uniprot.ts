@@ -48,8 +48,9 @@ import config, {
 import { validateConfig, formatConfigErrors } from './config-validator';
 import {
   parseGoTo,
-  genomeToProtein,
+  genomeToProteinNearest,
   selectCoordinate,
+  clampWindow,
   GnCoordinate,
 } from './utils/coordinate-navigation';
 import { buildHighlight } from './utils/structure-highlight';
@@ -626,16 +627,25 @@ class ProtvistaUniprot extends LitElement {
     this.requestUpdate();
   }
 
-  /** Broadcast a view change through nightingale-manager */
-  _navigateTo(start: number, end: number, highlight?: string) {
+  /**
+   * Broadcast a view change through nightingale-manager. The display window
+   * is clamped to a minimum span so a single-residue jump never collapses
+   * the viewer into a stretched one-column view.
+   */
+  _navigateTo(rawStart: number, rawEnd: number, highlight?: string) {
     const emitter = this.querySelector('nightingale-navigation');
-    if (!emitter) return;
+    const length = this.sequence?.length;
+    if (!emitter || !length) return;
+    const { start, end } = clampWindow(rawStart, rawEnd, length);
     this.displayCoordinates = { start, end };
+    // The manager only honours detail keys matching its observed attribute
+    // names (display-start/display-end/highlight) - the concatenated
+    // displaystart/displayend forms are ignored by its changeListener
     emitter.dispatchEvent(
       new CustomEvent('change', {
         detail: {
-          displaystart: start,
-          displayend: end,
+          'display-start': start,
+          'display-end': end,
           ...(highlight ? { highlight } : {}),
         },
         bubbles: true,
@@ -664,6 +674,7 @@ class ProtvistaUniprot extends LitElement {
       const start = Math.min(target.start, length);
       const end = Math.min(target.end, length);
       this._setGotoError(undefined);
+      // Highlight the exact range; _navigateTo widens the display window
       this._navigateTo(start, end, `${start}:${end}`);
       return;
     }
@@ -672,14 +683,29 @@ class ProtvistaUniprot extends LitElement {
     if (target.kind === 'genomic') {
       const coordinates = await this._loadGenomicCoordinates();
       const coordinate = selectCoordinate(coordinates, target.chromosome);
-      const mapped = coordinate && genomeToProtein(coordinate, target.position);
+      const mapped =
+        coordinate && genomeToProteinNearest(coordinate, target.position);
       if (!mapped) {
         this._setGotoError(
-          `Genomic position ${target.position} doesn't map onto ${this.accession} (intron or outside the gene?)`
+          `Genomic position ${target.position} doesn't map onto ${this.accession} (more than 10kb outside the gene?)`
         );
         return;
       }
-      position = mapped;
+      // Gene-level coordinates (e.g. pasted from a UniProt entry page) may
+      // span the whole gene: map both ends and show the covered residues
+      if (target.endPosition !== undefined) {
+        const mappedEnd = coordinate
+          ? genomeToProteinNearest(coordinate, target.endPosition)
+          : undefined;
+        if (mappedEnd) {
+          const start = Math.min(mapped.residue, mappedEnd.residue);
+          const end = Math.max(mapped.residue, mappedEnd.residue);
+          this._setGotoError(undefined);
+          this._navigateTo(start, end, `${start}:${end}`);
+          return;
+        }
+      }
+      position = mapped.residue;
     } else {
       position = target.position;
       if (position > length) {
@@ -697,10 +723,9 @@ class ProtvistaUniprot extends LitElement {
       }
     }
 
-    const start = Math.max(1, position - 15);
-    const end = Math.min(length, position + 15);
     this._setGotoError(undefined);
-    this._navigateTo(start, end, `${position}:${position}`);
+    // Highlight just the residue; _navigateTo widens the window around it
+    this._navigateTo(position - 15, position + 15, `${position}:${position}`);
   }
 
   _loadGenomicCoordinates(): Promise<GnCoordinate[] | undefined> {
@@ -1036,25 +1061,30 @@ class ProtvistaUniprot extends LitElement {
       </div>`;
     }
     return html`
-      <nightingale-manager
-        reflected-attributes="length display-start display-end highlight activefilters filters"
-      >
-        <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
-          <label for="protvista-goto-input">Go to</label>
+      <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
+        <div class="protvista-goto__row">
+          <label for="protvista-goto-input">Go to position</label>
           <input
             id="protvista-goto-input"
             name="goto"
             type="text"
-            placeholder="188-198 · 185S · g:21:25897620"
-            title="Jump to a residue range (188-198), a residue with amino-acid check (185S), or a genomic coordinate (g:<chromosome>:<position>)"
+            placeholder="e.g. 188-198"
           />
           <button type="submit">Go</button>
-          ${this.gotoError
-            ? html`<span class="protvista-goto__error" role="alert"
-                >${this.gotoError}</span
-              >`
-            : ''}
-        </form>
+        </div>
+        ${this.gotoError
+          ? html`<span class="protvista-goto__error" role="alert"
+              >${this.gotoError}</span
+            >`
+          : html`<span class="protvista-goto__hint"
+              >range <code>188-198</code> · residue with check
+              <code>185S</code> · genomic position
+              <code>g:21:25897620</code></span
+            >`}
+      </form>
+      <nightingale-manager
+        reflected-attributes="length display-start display-end highlight activefilters filters"
+      >
         <div class="nav-container">
           <div class="nav-track-label"></div>
           <div class="track-content">

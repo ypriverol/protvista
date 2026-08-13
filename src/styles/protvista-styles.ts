@@ -100,11 +100,32 @@ export default css`
 
   .protvista-goto {
     display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    margin: 0 auto 0.6rem;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
+  .protvista-goto__row {
+    display: flex;
     align-items: center;
     gap: 0.4rem;
-    margin: 0 0 0.4rem;
-    font-size: 0.85rem;
     flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .protvista-goto__hint {
+    color: #667;
+    font-size: 0.75rem;
+  }
+
+  .protvista-goto__hint code {
+    background: var(--protvista-hover-background);
+    border: 1px solid var(--protvista-track-background);
+    border-radius: 3px;
+    padding: 0 0.25em;
   }
 
   .protvista-goto input {
