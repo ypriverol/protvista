@@ -293,6 +293,12 @@ class ProtvistaUniprot extends LitElement {
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
   private gotoError?: string;
+  // Download progress across all configured endpoints: per-url fraction
+  // (0..1), aggregated into the slim bar above the viewer
+  private _fetchFractions = new Map<string, number>();
+  private _fetchDone = 0;
+  private _fetchTotal = 0;
+  private _lastProgressRender = 0;
   // Track keys ("CATEGORY-track") whose features are currently highlighted
   // on the 3D structure (and across all tracks) as a group
   private structureHighlightTracks = new Set<string>();
@@ -400,6 +406,32 @@ class ProtvistaUniprot extends LitElement {
    * payloads arrive so that one slow endpoint (e.g. 85MB of variants for
    * TITIN) never blanks the whole viewer.
    */
+  _onFetchProgress(url: string, loadedBytes: number, totalBytes?: number) {
+    // content-length is the compressed size while loadedBytes counts
+    // decompressed bytes; cap below 1 so only completion reaches 100%
+    const fraction = totalBytes
+      ? Math.min(loadedBytes / totalBytes, 0.95)
+      : 0.5;
+    this._fetchFractions.set(url, fraction);
+    this._renderProgress();
+  }
+
+  _renderProgress(force = false) {
+    const now = Date.now();
+    if (!force && now - this._lastProgressRender < 150) return;
+    this._lastProgressRender = now;
+    this.requestUpdate();
+  }
+
+  get _fetchProgressPercent(): number {
+    if (this._fetchTotal === 0) return 100;
+    let sum = 0;
+    this._fetchFractions.forEach((fraction) => {
+      sum += fraction;
+    });
+    return Math.min(100, Math.round((sum / this._fetchTotal) * 100));
+  }
+
   _markDataAvailable() {
     if (this.hasData) return;
     this.hasData = true;
@@ -456,11 +488,20 @@ class ProtvistaUniprot extends LitElement {
       // Kick off every fetch immediately, but do NOT await them as a batch:
       // each category below only waits for its own urls, so fast tracks
       // render while slow ones are still downloading.
+      const uniqueUrls = [...new Set(urls)];
+      this._fetchTotal = uniqueUrls.length;
+      this._fetchDone = 0;
+      this._fetchFractions.clear();
       const pending = new Map<string, Promise<unknown>>(
-        [...new Set(urls)].map((url) => [
+        uniqueUrls.map((url) => [
           url,
-          fetchOne(url.replace('{accession}', accession)).then((payload) => {
+          fetchOne(url.replace('{accession}', accession), (loaded, total) =>
+            this._onFetchProgress(url, loaded, total)
+          ).then((payload) => {
             this.rawData[url] = payload as TrackPayload;
+            this._fetchFractions.set(url, 1);
+            this._fetchDone += 1;
+            this._renderProgress(true);
             this._onDataAvailable(payload);
             return payload;
           }),
@@ -874,6 +915,9 @@ class ProtvistaUniprot extends LitElement {
     this.displayCoordinates = {};
     this.gotoError = undefined;
     this._genomicCoordinates = undefined;
+    this._fetchFractions.clear();
+    this._fetchDone = 0;
+    this._fetchTotal = 0;
     this.structureHighlightTracks.clear();
     this._structureGroupHighlight = '';
     this._clickedFeatureHighlight = '';
@@ -1153,15 +1197,36 @@ class ProtvistaUniprot extends LitElement {
     return this;
   }
 
+  get _progressTemplate() {
+    if (this._fetchTotal === 0 || this._fetchDone >= this._fetchTotal) {
+      return '';
+    }
+    const percent = this._fetchProgressPercent;
+    return html`
+      <div
+        class="protvista-progress"
+        role="progressbar"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="${percent}"
+        aria-label="Loading annotation data"
+      >
+        <div class="protvista-progress__bar" style="width: ${percent}%"></div>
+        <span class="protvista-progress__label"
+          >Loading annotation data ${this._fetchDone}/${this._fetchTotal}</span
+        >
+      </div>
+    `;
+  }
+
   render() {
     // Component isn't ready
     if (!this.sequence || !this.config || this.suspend) {
       return html``;
     }
     if (this.loading) {
-      return html`<div class="protvista-loader">
-        ${svg`${unsafeHTML(loaderIcon)}`}
-      </div>`;
+      return html`${this._progressTemplate}
+        <div class="protvista-loader">${svg`${unsafeHTML(loaderIcon)}`}</div>`;
     }
     if (!this.hasData) {
       return html`<div class="protvista-no-results">
@@ -1169,6 +1234,7 @@ class ProtvistaUniprot extends LitElement {
       </div>`;
     }
     return html`
+      ${this._progressTemplate}
       <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
         <div class="protvista-goto__row">
           <label for="protvista-goto-input">Go to position</label>

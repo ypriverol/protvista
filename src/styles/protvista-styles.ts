@@ -98,6 +98,30 @@ export default css`
     --protvista-link-color: #00639a;
   }
 
+  .protvista-progress {
+    position: relative;
+    height: 4px;
+    background: var(--protvista-track-background);
+    border-radius: 2px;
+    margin: 0 0 1.1rem;
+  }
+
+  .protvista-progress__bar {
+    height: 100%;
+    background: var(--protvista-link-color);
+    border-radius: 2px;
+    transition: width 0.25s ease;
+  }
+
+  .protvista-progress__label {
+    position: absolute;
+    right: 0;
+    top: 6px;
+    font-size: 0.7rem;
+    color: #667;
+    line-height: 1;
+  }
+
   .protvista-goto {
     display: flex;
     flex-direction: column;

@@ -15,9 +15,16 @@ export const loadComponent = (
   }
 };
 
+export type FetchProgress = (loadedBytes: number, totalBytes?: number) => void;
+
 // Fetches and parses a single url; resolves to null on any failure so that
-// one slow or broken endpoint never rejects a whole batch.
-export const fetchOne = async (url: string): Promise<unknown> => {
+// one slow or broken endpoint never rejects a whole batch. When onProgress
+// is provided the body is streamed so large payloads (e.g. 85MB of TITIN
+// variants) report download progress instead of appearing stalled.
+export const fetchOne = async (
+  url: string,
+  onProgress?: FetchProgress
+): Promise<unknown> => {
   try {
     const response = await fetch(url);
     if (!response.ok) {
@@ -26,7 +33,29 @@ export const fetchOne = async (url: string): Promise<unknown> => {
       console.warn(`HTTP error status: ${response.status} at ${url}`);
       return null;
     }
-    return await response.json();
+    if (!onProgress || !response.body) {
+      return await response.json();
+    }
+    // NOTE: content-length reflects the compressed size while the reader
+    // yields decompressed bytes, so the fraction is clamped by callers
+    const total = Number(response.headers.get('content-length')) || undefined;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onProgress(received, total);
+    }
+    const merged = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return JSON.parse(new TextDecoder().decode(merged));
   } catch (error) {
     console.warn(`Failed to fetch or parse JSON from ${url}:`, error);
     return null; // or handle error data as needed
