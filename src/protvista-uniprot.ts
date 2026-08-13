@@ -931,7 +931,7 @@ class ProtvistaUniprot extends LitElement {
 
       // 1D -> 3D: clicking a feature/variant mirrors its range onto the
       // structure (nightingale-structure never hears manager highlights)
-      if (e.detail?.eventType === 'click') {
+      if (e.detail?.eventType === 'click' && !this.nostructure) {
         const feature = e.detail.feature as
           | {
               start?: number | string;
@@ -942,10 +942,14 @@ class ProtvistaUniprot extends LitElement {
         const start = Number(feature?.start ?? feature?.begin);
         const end = Number(feature?.end ?? start);
         if (Number.isFinite(start) && start >= 1) {
-          this._clickedFeatureHighlight = `${Math.trunc(start)}:${Math.trunc(
+          const next = `${Math.trunc(start)}:${Math.trunc(
             Number.isFinite(end) ? Math.max(start, end) : start
           )}`;
-          this.requestUpdate();
+          // Re-clicking the same feature must not trigger a re-render
+          if (next !== this._clickedFeatureHighlight) {
+            this._clickedFeatureHighlight = next;
+            this.requestUpdate();
+          }
         }
       }
     });
