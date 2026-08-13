@@ -319,6 +319,13 @@ class ProtvistaUniprot extends LitElement {
   // Category opens deferred to the next frame that haven't fired yet; a
   // close click in between removes the entry to cancel the expansion.
   private _pendingCategoryOpens = new Set<string>();
+  // Last RAW data reference pushed into each track element. Comparing
+  // against element.data is useless: nightingale's setter stores a
+  // processed copy and the getter returns that - never the object we
+  // assigned - so an identity guard on element.data is always true and
+  // every lit update re-fed every track (2.1s NonOverlappingLayout re-run
+  // per click on TITIN, measured by CPU profile).
+  private _assignedTrackData = new WeakMap<Element, unknown>();
   // Tracks the exact data reference last pushed into each heatmap so
   // _loadDataInComponents (which runs after every lit update) doesn't
   // rebuild heatmaps that already display the current data.
@@ -573,8 +580,9 @@ class ProtvistaUniprot extends LitElement {
         `#${CSS.escape(`track-${id}`)}`
       );
 
-      // set data if it hasn't changed
-      if (element && element.data !== data) {
+      // Set data only if this exact object hasn't been pushed before
+      if (element && this._assignedTrackData.get(element) !== data) {
+        this._assignedTrackData.set(element, data);
         element.data = data as NightingaleTrackCanvas['data'];
       }
       const currentCategory = this.config?.categories.find(
@@ -610,7 +618,10 @@ class ProtvistaUniprot extends LitElement {
           // makes the track re-process and redraw everything, which is very
           // expensive for dense tracks (e.g. 240k+ variants for TITIN) and
           // this method runs after every lit update.
-          if (elementTrack && elementTrack.data !== trackData) {
+          if (
+            elementTrack &&
+            this._assignedTrackData.get(elementTrack) !== trackData
+          ) {
             this._assignTrackDataWhenVisible(elementTrack, trackData);
           }
         }
@@ -880,7 +891,9 @@ class ProtvistaUniprot extends LitElement {
    * most are below the fold.
    */
   _assignTrackDataWhenVisible(element: NightingaleTrackCanvas, data: unknown) {
+    if (this._assignedTrackData.get(element) === data) return;
     if (typeof IntersectionObserver === 'undefined') {
+      this._assignedTrackData.set(element, data);
       element.data = data as NightingaleTrackCanvas['data'];
       return;
     }
@@ -894,6 +907,7 @@ class ProtvistaUniprot extends LitElement {
             this._pendingTrackData.delete(entry.target);
             this._trackVisibilityObserver?.unobserve(entry.target);
             if (pending !== undefined) {
+              this._assignedTrackData.set(entry.target, pending);
               (entry.target as NightingaleTrackCanvas).data =
                 pending as NightingaleTrackCanvas['data'];
             }
