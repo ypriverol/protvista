@@ -214,8 +214,13 @@ const formatPTMPeptidoform = (peptide: string, ptms: PTMHighlight[]) => {
   return peptidoform;
 };
 
-const formatProformaWithLink = (proforma = '') => {
-  return proforma.replace(/\[([^\]]+)\]/g, (_, modification) => {
+export const formatProformaWithLink = (proforma = '') => {
+  // Escape the WHOLE string first: Proforma comes straight from the
+  // PTMeXchange API and anything outside (or inside) the brackets would
+  // otherwise be injected into the tooltip HTML verbatim. The linkifying
+  // replace below runs on the escaped text, and known modification names
+  // are plain alphanumerics so the escaped lookup key still matches.
+  return escapeHtml(proforma).replace(/\[([^\]]+)\]/g, (_, modification) => {
     const id =
       unimodIdMapping[
         modification.toLowerCase() as keyof typeof unimodIdMapping

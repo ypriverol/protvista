@@ -197,6 +197,12 @@ class ProtvistaUniprot extends LitElement {
     x: number;
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
+  // Data waiting to be pushed into a track element once it scrolls into
+  // view. Feeding a dense track is expensive (full re-process + draw), so
+  // offscreen tracks are deferred - the pattern EBI ships upstream as
+  // nightingale-scrollbox (ebi-webcomponents/nightingale#311).
+  private _pendingTrackData = new WeakMap<Element, unknown>();
+  private _trackVisibilityObserver?: IntersectionObserver;
   // Categories that have been expanded at least once: their track elements
   // stay mounted (hidden) on collapse so re-expanding is instant instead of
   // re-processing all the data.
@@ -487,7 +493,7 @@ class ProtvistaUniprot extends LitElement {
           // expensive for dense tracks (e.g. 240k+ variants for TITIN) and
           // this method runs after every lit update.
           if (elementTrack && elementTrack.data !== trackData) {
-            elementTrack.data = trackData as NightingaleTrackCanvas['data'];
+            this._assignTrackDataWhenVisible(elementTrack, trackData);
           }
         }
       }
@@ -564,6 +570,39 @@ class ProtvistaUniprot extends LitElement {
     this.querySelectorAll('.category-label.open').forEach((el) =>
       el.classList.remove('open')
     );
+  }
+
+  /**
+   * Push data into a track element only once it is (nearly) visible.
+   * Expanding several categories mounts many tracks at once; without this,
+   * every one of them processes its full dataset immediately even though
+   * most are below the fold.
+   */
+  _assignTrackDataWhenVisible(element: NightingaleTrackCanvas, data: unknown) {
+    if (typeof IntersectionObserver === 'undefined') {
+      element.data = data as NightingaleTrackCanvas['data'];
+      return;
+    }
+    this._pendingTrackData.set(element, data);
+    if (!this._trackVisibilityObserver) {
+      this._trackVisibilityObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const pending = this._pendingTrackData.get(entry.target);
+            this._pendingTrackData.delete(entry.target);
+            this._trackVisibilityObserver?.unobserve(entry.target);
+            if (pending !== undefined) {
+              (entry.target as NightingaleTrackCanvas).data =
+                pending as NightingaleTrackCanvas['data'];
+            }
+          }
+        },
+        // Start loading slightly before the track scrolls into view
+        { rootMargin: '250px 0px' }
+      );
+    }
+    this._trackVisibilityObserver.observe(element);
   }
 
   updated(changedProperties: Map<string, string>) {
