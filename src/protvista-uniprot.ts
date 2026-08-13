@@ -213,6 +213,7 @@ class ProtvistaUniprot extends LitElement {
   // Track keys ("CATEGORY-track") whose features are currently highlighted
   // on the 3D structure (and across all tracks) as a group
   private structureHighlightTracks = new Set<string>();
+  private _structureGroupHighlight = '';
   private _genomicCoordinates?: Promise<GnCoordinate[] | undefined>;
   // Data waiting to be pushed into a track element once it scrolls into
   // view. Feeding a dense track is expensive (full re-process + draw), so
@@ -579,8 +580,7 @@ class ProtvistaUniprot extends LitElement {
         'Too many feature intervals selected for structure highlighting; showing the first 500'
       );
     }
-    // Broadcast through the manager: ruler, tracks AND the 3D structure
-    // (which maps the ranges through its SIFTS mappings) stay in sync
+    // Broadcast through the manager so the ruler and every 1D track sync
     const emitter = this.querySelector('nightingale-navigation');
     emitter?.dispatchEvent(
       new CustomEvent('change', {
@@ -589,7 +589,25 @@ class ProtvistaUniprot extends LitElement {
         cancelable: true,
       })
     );
+    // nightingale-structure does NOT register with the manager, so the
+    // 3D pane must be driven directly (it maps the UniProt ranges onto
+    // the structure through its SIFTS mappings)
+    this._structureGroupHighlight = highlight;
+    this._applyStructureHighlight();
     this.requestUpdate();
+  }
+
+  _applyStructureHighlight() {
+    const highlight = this._structureGroupHighlight;
+    this.querySelectorAll('nightingale-structure').forEach((el) => {
+      if (highlight) {
+        if (el.getAttribute('highlight') !== highlight) {
+          el.setAttribute('highlight', highlight);
+        }
+      } else if (el.hasAttribute('highlight')) {
+        el.removeAttribute('highlight');
+      }
+    });
   }
 
   _handleStructureToggle(e: Event) {
@@ -734,6 +752,7 @@ class ProtvistaUniprot extends LitElement {
     this.gotoError = undefined;
     this._genomicCoordinates = undefined;
     this.structureHighlightTracks.clear();
+    this._structureGroupHighlight = '';
     // The open/closed arrow state is toggled imperatively via classList,
     // so lit won't reset it on re-render
     this.querySelectorAll('.category-label.open').forEach((el) =>
@@ -802,6 +821,10 @@ class ProtvistaUniprot extends LitElement {
         'protvista:first-render'
       );
     }
+
+    // A structure selected after the toggle mounts a fresh
+    // nightingale-structure element; re-apply the group highlight to it
+    if (this._structureGroupHighlight) this._applyStructureHighlight();
 
     const filterComponent =
       this.querySelector<NightingaleFilter>('nightingale-filter');
