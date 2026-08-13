@@ -50,6 +50,7 @@ import {
   parseGoTo,
   genomeToProtein,
   selectCoordinate,
+  clampWindow,
   GnCoordinate,
 } from './utils/coordinate-navigation';
 
@@ -574,10 +575,16 @@ class ProtvistaUniprot extends LitElement {
     this.requestUpdate();
   }
 
-  /** Broadcast a view change through nightingale-manager */
-  _navigateTo(start: number, end: number, highlight?: string) {
+  /**
+   * Broadcast a view change through nightingale-manager. The display window
+   * is clamped to a minimum span so a single-residue jump never collapses
+   * the viewer into a stretched one-column view.
+   */
+  _navigateTo(rawStart: number, rawEnd: number, highlight?: string) {
     const emitter = this.querySelector('nightingale-navigation');
-    if (!emitter) return;
+    const length = this.sequence?.length;
+    if (!emitter || !length) return;
+    const { start, end } = clampWindow(rawStart, rawEnd, length);
     this.displayCoordinates = { start, end };
     emitter.dispatchEvent(
       new CustomEvent('change', {
@@ -612,6 +619,7 @@ class ProtvistaUniprot extends LitElement {
       const start = Math.min(target.start, length);
       const end = Math.min(target.end, length);
       this._setGotoError(undefined);
+      // Highlight the exact range; _navigateTo widens the display window
       this._navigateTo(start, end, `${start}:${end}`);
       return;
     }
@@ -645,10 +653,9 @@ class ProtvistaUniprot extends LitElement {
       }
     }
 
-    const start = Math.max(1, position - 15);
-    const end = Math.min(length, position + 15);
     this._setGotoError(undefined);
-    this._navigateTo(start, end, `${position}:${position}`);
+    // Highlight just the residue; _navigateTo widens the window around it
+    this._navigateTo(position - 15, position + 15, `${position}:${position}`);
   }
 
   _loadGenomicCoordinates(): Promise<GnCoordinate[] | undefined> {
@@ -946,20 +953,25 @@ class ProtvistaUniprot extends LitElement {
         reflected-attributes="length display-start display-end highlight activefilters filters"
       >
         <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
-          <label for="protvista-goto-input">Go to</label>
-          <input
-            id="protvista-goto-input"
-            name="goto"
-            type="text"
-            placeholder="188-198 · 185S · g:21:25897620"
-            title="Jump to a residue range (188-198), a residue with amino-acid check (185S), or a genomic coordinate (g:<chromosome>:<position>)"
-          />
-          <button type="submit">Go</button>
+          <div class="protvista-goto__row">
+            <label for="protvista-goto-input">Go to position</label>
+            <input
+              id="protvista-goto-input"
+              name="goto"
+              type="text"
+              placeholder="e.g. 188-198"
+            />
+            <button type="submit">Go</button>
+          </div>
           ${this.gotoError
             ? html`<span class="protvista-goto__error" role="alert"
                 >${this.gotoError}</span
               >`
-            : ''}
+            : html`<span class="protvista-goto__hint"
+                >range <code>188-198</code> · residue with check
+                <code>185S</code> · genomic position
+                <code>g:21:25897620</code></span
+              >`}
         </form>
         <div class="nav-container">
           <div class="nav-track-label"></div>

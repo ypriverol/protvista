@@ -3,6 +3,7 @@ import {
   parseGoTo,
   genomeToProtein,
   selectCoordinate,
+  clampWindow,
   GnCoordinate,
 } from '../utils/coordinate-navigation';
 
@@ -145,5 +146,34 @@ describe('selectCoordinate', () => {
   it('falls back to the first mapping', () => {
     expect(selectCoordinate([a, b])).toBe(a);
     expect(selectCoordinate([a, b], '7')).toBe(a);
+  });
+});
+
+describe('clampWindow', () => {
+  it('widens a single-residue window to the minimum span', () => {
+    const { start, end } = clampWindow(185, 185, 770);
+    expect(end - start + 1).toBeGreaterThanOrEqual(21);
+    expect(start).toBeLessThanOrEqual(185);
+    expect(end).toBeGreaterThanOrEqual(185);
+  });
+
+  it('keeps wide windows untouched', () => {
+    expect(clampWindow(100, 300, 770)).toEqual({ start: 100, end: 300 });
+  });
+
+  it('clamps at the sequence start', () => {
+    const { start, end } = clampWindow(1, 1, 770);
+    expect(start).toBe(1);
+    expect(end - start + 1).toBeGreaterThanOrEqual(21);
+  });
+
+  it('clamps at the sequence end', () => {
+    const { start, end } = clampWindow(770, 770, 770);
+    expect(end).toBe(770);
+    expect(end - start + 1).toBeGreaterThanOrEqual(21);
+  });
+
+  it('handles sequences shorter than the minimum span', () => {
+    expect(clampWindow(2, 2, 10)).toEqual({ start: 1, end: 10 });
   });
 });

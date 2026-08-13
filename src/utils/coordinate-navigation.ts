@@ -124,3 +124,34 @@ export const selectCoordinate = (
     ) ?? coordinates[0]
   );
 };
+
+/**
+ * Clamp a requested display window to the sequence and enforce a minimum
+ * span. Zooming to a single residue (or a tiny range) renders a stretched,
+ * near-empty view where the highlight fills the whole viewport; keeping at
+ * least ~20 visible residues preserves context around the target.
+ */
+export const clampWindow = (
+  start: number,
+  end: number,
+  length: number,
+  minSpan = 21
+): { start: number; end: number } => {
+  let s = Math.max(1, Math.min(Math.min(start, end), length));
+  let e = Math.min(length, Math.max(s, Math.max(start, end)));
+  const span = e - s + 1;
+  if (span < minSpan) {
+    const pad = Math.ceil((minSpan - span) / 2);
+    s -= pad;
+    e += pad;
+    if (s < 1) {
+      e += 1 - s;
+      s = 1;
+    }
+    if (e > length) {
+      s = Math.max(1, s - (e - length));
+      e = length;
+    }
+  }
+  return { start: s, end: e };
+};
