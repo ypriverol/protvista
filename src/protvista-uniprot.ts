@@ -586,11 +586,14 @@ class ProtvistaUniprot extends LitElement {
     if (!emitter || !length) return;
     const { start, end } = clampWindow(rawStart, rawEnd, length);
     this.displayCoordinates = { start, end };
+    // The manager only honours detail keys matching its observed attribute
+    // names (display-start/display-end/highlight) - the concatenated
+    // displaystart/displayend forms are ignored by its changeListener
     emitter.dispatchEvent(
       new CustomEvent('change', {
         detail: {
-          displaystart: start,
-          displayend: end,
+          'display-start': start,
+          'display-end': end,
           ...(highlight ? { highlight } : {}),
         },
         bubbles: true,
