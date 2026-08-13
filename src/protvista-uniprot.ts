@@ -197,6 +197,10 @@ class ProtvistaUniprot extends LitElement {
     x: number;
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
+  // Categories that have been expanded at least once: their track elements
+  // stay mounted (hidden) on collapse so re-expanding is instant instead of
+  // re-processing all the data.
+  private everOpenedCategories = new Set<string>();
   // Tracks the exact data reference last pushed into each heatmap so
   // _loadDataInComponents (which runs after every lit update) doesn't
   // rebuild heatmaps that already display the current data.
@@ -788,13 +792,22 @@ class ProtvistaUniprot extends LitElement {
               <!-- Expanded Categories -->
               ${category.tracks &&
               category.tracks.map((track) => {
-                if (this.openCategories.includes(category.name)) {
+                const isOpen = this.openCategories.includes(category.name);
+                // Once a category has been expanded, keep its track elements
+                // mounted and merely hide them on collapse: re-mounting means
+                // Nightingale re-processes all the data from scratch, which
+                // is seconds of work for dense tracks (e.g. TITIN variants).
+                if (isOpen || this.everOpenedCategories.has(category.name)) {
                   const trackData = this.data[`${category.name}-${track.name}`];
                   return trackData &&
                     ((Array.isArray(trackData) && trackData.length) ||
                       Object.keys(trackData).length)
                     ? html`
-                        <div class="category__track" id="track_${track.name}">
+                        <div
+                          class="category__track"
+                          id="track_${track.name}"
+                          .style="${isOpen ? '' : 'display:none'}"
+                        >
                           <div class="track-label" title="${track.tooltip}">
                             ${(track.filterComponent &&
                               this.getFilterComponent(
@@ -842,12 +855,19 @@ class ProtvistaUniprot extends LitElement {
               ${!category.tracks
                 ? (this.data[category.name] as { accession?: string }[]).map(
                     (item: { accession?: string }) => {
-                      if (this.openCategories.includes(category.name)) {
+                      const isOpen = this.openCategories.includes(
+                        category.name
+                      );
+                      if (
+                        isOpen ||
+                        this.everOpenedCategories.has(category.name)
+                      ) {
                         if (!item || !item.accession) return '';
                         return html`
                           <div
                             class="category__track"
                             id="track_${item.accession}"
+                            .style="${isOpen ? '' : 'display:none'}"
                           >
                             <div class="track-label" title="${item.accession}">
                               ${item.accession}
@@ -935,6 +955,7 @@ class ProtvistaUniprot extends LitElement {
     if (toggle && !target.classList.contains('open')) {
       target.classList.add('open');
       this.openCategories = [...this.openCategories, toggle];
+      this.everOpenedCategories.add(toggle);
     } else {
       target.classList.remove('open');
       this.openCategories = [...this.openCategories].filter(

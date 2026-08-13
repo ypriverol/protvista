@@ -82,8 +82,25 @@ export default css`
     line-height: normal;
   }
 
+  /*
+   * Colours follow the UniProt Franklin palette (measured from the
+   * uniprot.org production stylesheet):
+   *   sapphire-blue #014371 (site navbar), sea-blue #00639a (links),
+   *   platinum #e4e8eb (light rows), hover #f5f9fc.
+   * Each is overridable by integrators via custom properties.
+   */
+  protvista-uniprot {
+    --protvista-category-background: #014371;
+    --protvista-category-color: #fff;
+    --protvista-track-background: #e4e8eb;
+    --protvista-track-color: #1a1a1a;
+    --protvista-hover-background: #f5f9fc;
+    --protvista-link-color: #00639a;
+  }
+
   .category-label {
-    background-color: #b2f5ff;
+    background-color: var(--protvista-category-background);
+    color: var(--protvista-category-color);
     cursor: pointer;
   }
 
@@ -94,7 +111,7 @@ export default css`
     height: 0;
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
-    border-left: 5px solid #333;
+    border-left: 5px solid var(--protvista-category-color);
     margin-right: 5px;
     -webkit-transition: all 0.1s;
     /* Safari */
@@ -109,16 +126,27 @@ export default css`
     height: 0;
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
-    border-top: 5px solid #333;
+    border-top: 5px solid var(--protvista-category-color);
     margin-right: 5px;
   }
 
   .track-label {
-    background-color: #d9faff;
+    background-color: var(--protvista-track-background);
+    color: var(--protvista-track-color);
+  }
+
+  .track-label:hover {
+    background-color: var(--protvista-hover-background);
+  }
+
+  .track-label a,
+  .track-label a:link,
+  .track-label a:visited {
+    color: var(--protvista-link-color);
   }
 
   nightingale-track-canvas {
-    border-top: 1px solid #d9faff;
+    border-top: 1px solid var(--protvista-track-background);
   }
 
   nightingale-navigation {
