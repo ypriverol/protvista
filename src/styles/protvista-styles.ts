@@ -5,6 +5,57 @@ export default css`
     width: 80vw;
   }
 
+  .protvista-uniprot-tooltip {
+    position: fixed;
+    z-index: 50000;
+    max-width: 22rem;
+    max-height: 20rem;
+    overflow-y: auto;
+    background: #616161;
+    color: #fff;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    padding: 0;
+  }
+
+  .protvista-uniprot-tooltip a,
+  .protvista-uniprot-tooltip a:link,
+  .protvista-uniprot-tooltip a:visited {
+    color: #9fd7ff;
+  }
+
+  .protvista-uniprot-tooltip-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 700;
+    padding: 0.4rem 0.6rem;
+    background: #4a4a4a;
+    border-radius: 4px 4px 0 0;
+  }
+
+  .protvista-uniprot-tooltip-header button {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.2rem;
+  }
+
+  .protvista-uniprot-tooltip-body {
+    padding: 0.5rem 0.6rem;
+  }
+
+  .protvista-uniprot-tooltip-body table td {
+    padding: 0.15rem 0.3rem;
+    vertical-align: top;
+  }
+
   .track-content__coloured-sequence {
     display: flex;
     align-items: center;

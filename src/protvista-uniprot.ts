@@ -190,6 +190,18 @@ class ProtvistaUniprot extends LitElement {
   };
   private config?: ProtvistaConfig;
   private configSrc?: string;
+  private tooltip: {
+    visible: boolean;
+    title: string;
+    content: string;
+    x: number;
+    y: number;
+  } = { visible: false, title: '', content: '', x: 0, y: 0 };
+  private _onOutsideClick = (e: MouseEvent) => {
+    if (!(e.target as Element)?.closest?.('protvista-uniprot')) {
+      this._hideTooltip();
+    }
+  };
 
   constructor() {
     super();
@@ -575,7 +587,59 @@ class ProtvistaUniprot extends LitElement {
       if (e.detail?.displayend) {
         this.displayCoordinates.end = e.detail.displayend;
       }
+
+      if (!this.notooltip) {
+        if (e.detail?.eventType === 'click') {
+          this._updateTooltip(e);
+        } else if (!e.detail?.eventType || e.detail.eventType === 'reset') {
+          // Zoom/pan/reset: any open tooltip is now out of place
+          this._hideTooltip();
+        }
+      }
     });
+
+    if (!this.notooltip) {
+      document.addEventListener('click', this._onOutsideClick);
+    }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    document.removeEventListener('click', this._onOutsideClick);
+  }
+
+  _updateTooltip(e: NightingaleEvent) {
+    const feature = e.detail?.feature as
+      | {
+          type?: string;
+          start?: number | string;
+          end?: number | string;
+          tooltipContent?: string;
+        }
+      | undefined;
+    if (!feature?.tooltipContent) {
+      return;
+    }
+    const [pageX, pageY] = e.detail?.coords || [0, 0];
+    this.tooltip = {
+      visible: true,
+      title: `${feature.type || ''} ${feature.start || ''}-${feature.end || ''}`,
+      // Built by this package's tooltip formatters, which escape all
+      // external API data (see src/utils/security.ts)
+      content: feature.tooltipContent,
+      // coords are page-based; the tooltip is position:fixed, so convert
+      // to viewport coordinates
+      x: pageX - window.scrollX,
+      y: pageY - window.scrollY,
+    };
+    this.requestUpdate();
+  }
+
+  _hideTooltip() {
+    if (this.tooltip.visible) {
+      this.tooltip = { ...this.tooltip, visible: false };
+      this.requestUpdate();
+    }
   }
 
   /**
@@ -814,6 +878,30 @@ class ProtvistaUniprot extends LitElement {
               <protvista-uniprot-structure
                 accession="${this.accession || ''}"
               ></protvista-uniprot-structure>
+            `
+          : ''}
+        ${!this.notooltip && this.tooltip.visible
+          ? html`
+              <div
+                class="protvista-uniprot-tooltip"
+                role="tooltip"
+                style="left: ${this.tooltip.x + 8}px; top: ${this.tooltip.y +
+                8}px"
+              >
+                <div class="protvista-uniprot-tooltip-header">
+                  <span>${this.tooltip.title}</span>
+                  <button
+                    type="button"
+                    aria-label="Close tooltip"
+                    @click="${this._hideTooltip}"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div class="protvista-uniprot-tooltip-body">
+                  ${unsafeHTML(this.tooltip.content)}
+                </div>
+              </div>
             `
           : ''}
       </nightingale-manager>
