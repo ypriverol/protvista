@@ -32,6 +32,11 @@ jobs:
         run: python3 -m http.server 4573 --directory demo &
 
       - name: Run smoke tests
+        # EBI's edge drops connections from headless-Chromium on Actions
+        # runners (ERR_EMPTY_RESPONSE on every request), while plain HTTP
+        # clients work - so route API traffic through Node's fetch
+        env:
+          E2E_PROXY: '1'
         run: node e2e/smoke.mjs http://localhost:4573
 
       - name: Upload failure screenshot
