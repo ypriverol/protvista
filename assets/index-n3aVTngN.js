@@ -6819,18 +6819,13 @@ void main() {
         aria-valuenow="${e}"
         aria-label="Loading annotation data"
       >
-        <div
-          class="protvista-progress__bar"
-          style="width: ${e}%"
-        ></div>
+        <div class="protvista-progress__bar" style="width: ${e}%"></div>
         <span class="protvista-progress__label"
           >Loading annotation data ${this._fetchDone}/${this._fetchTotal}</span
         >
       </div>
     `}render(){return!this.sequence||!this.config||this.suspend?fe``:this.loading?fe`${this._progressTemplate}
-        <div class="protvista-loader">
-          ${pe`${We(gAt)}`}
-        </div>`:this.hasData?fe`
+        <div class="protvista-loader">${pe`${We(gAt)}`}</div>`:this.hasData?fe`
       ${this._progressTemplate}
       <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
         <div class="protvista-goto__row">
