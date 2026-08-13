@@ -1,0 +1,35 @@
+name: E2E smoke
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Browser smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build demo
+        run: yarn build:demo
+
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Serve demo
+        run: python3 -m http.server 4573 --directory demo &
+
+      - name: Run smoke tests
+        run: node e2e/smoke.mjs http://localhost:4573
