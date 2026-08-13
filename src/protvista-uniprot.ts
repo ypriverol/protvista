@@ -174,6 +174,87 @@ async function callAdapter(
   }
 }
 
+/**
+ * Wrapper-side performance patches for upstream Nightingale elements
+ * (see the "highlight hot path" audit in PR discussion):
+ *
+ * withZoom.attributeChangedCallback treats ANY changed attribute - the
+ * highlight included - as a zoom and calls zoomRefreshed(), which in the
+ * SVG-based elements rebuilds everything: nightingale-colored-sequence
+ * rewrites one <stop> per residue (34,350 x 2 attrs x 4 tracks on TITIN
+ * per click) and nightingale-linegraph-track regenerates full multi-
+ * megabyte path strings. Skip the rebuild when nothing that affects
+ * geometry changed and refresh only the highlight overlay.
+ */
+type RefreshablePatchTarget = HTMLElement & {
+  zoomRefreshed?(): void;
+  updateHighlight?(): void;
+  onDimensionsChange?(): void;
+  data?: unknown;
+  sequence?: string;
+  length?: number;
+  'display-start'?: number;
+  'display-end'?: number;
+  width?: number;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const withHighlightOnlyRefresh = <T extends new (...args: any[]) => any>(
+  Base: T
+): T =>
+  class extends Base {
+    private __lastGeometryStamp?: string;
+    private __lastDataRef?: unknown;
+
+    zoomRefreshed() {
+      const self = this as unknown as RefreshablePatchTarget;
+      const stamp = [
+        self.width,
+        self['display-start'],
+        self['display-end'],
+        self.length,
+        self.sequence?.length,
+        self.offsetWidth,
+      ].join('|');
+      if (
+        this.__lastGeometryStamp === stamp &&
+        this.__lastDataRef === self.data
+      ) {
+        // Only the highlight (or an equally non-geometric attribute)
+        // changed: redraw the overlay, skip the O(sequence-length) rebuild
+        self.updateHighlight?.();
+        return;
+      }
+      this.__lastGeometryStamp = stamp;
+      this.__lastDataRef = self.data;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (super.zoomRefreshed as any)?.call(this);
+    }
+  };
+
+/**
+ * nightingale-variation-canvas's zoomRefreshed() unconditionally calls
+ * onDimensionsChange(), which schedules another zoomRefreshed() - a
+ * self-perpetuating requestAnimationFrame loop that burns CPU forever
+ * once variant data is loaded. Break the cycle by only propagating real
+ * height changes.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const withStableDimensions = <T extends new (...args: any[]) => any>(
+  Base: T
+): T =>
+  class extends Base {
+    private __lastMeasuredHeight?: number;
+
+    onDimensionsChange() {
+      const height = (this as unknown as HTMLElement).offsetHeight;
+      if (this.__lastMeasuredHeight === height) return;
+      this.__lastMeasuredHeight = height;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (super.onDimensionsChange as any)?.call(this);
+    }
+  };
+
 type NightingaleEvent = Event & {
   detail?: {
     displaystart?: number;
@@ -286,11 +367,20 @@ class ProtvistaUniprot extends LitElement {
   registerWebComponents() {
     loadComponent('nightingale-navigation', NightingaleNavigation);
     loadComponent('nightingale-track-canvas', NightingaleTrackCanvas);
-    loadComponent('nightingale-colored-sequence', NightingaleColoredSequence);
+    loadComponent(
+      'nightingale-colored-sequence',
+      withHighlightOnlyRefresh(NightingaleColoredSequence)
+    );
     loadComponent('nightingale-interpro-track', NightingaleInterproTrack);
     loadComponent('nightingale-sequence', NightingaleSequence);
-    loadComponent('nightingale-variation-canvas', NightingaleVariationCanvas);
-    loadComponent('nightingale-linegraph-track', NightingaleLinegraphTrack);
+    loadComponent(
+      'nightingale-variation-canvas',
+      withStableDimensions(NightingaleVariationCanvas)
+    );
+    loadComponent(
+      'nightingale-linegraph-track',
+      withHighlightOnlyRefresh(NightingaleLinegraphTrack)
+    );
     loadComponent('nightingale-filter', NightingaleFilter);
     loadComponent('nightingale-manager', NightingaleManager);
     loadComponent('protvista-uniprot-structure', ProtvistaUniprotStructure);
