@@ -485,10 +485,10 @@
     "@nightingale-elements/nightingale-new-core" "^5.6.0"
     d3 "7.9.0"
 
-"@nightingale-elements/nightingale-structure@5.10.2":
-  version "5.10.2"
-  resolved "https://registry.yarnpkg.com/@nightingale-elements/nightingale-structure/-/nightingale-structure-5.10.2.tgz#84f019b51f856441efde742f6b961d5971e8492a"
-  integrity sha512-udJKAR6cDJHWpSlM8rnCcYojPxVJwtmmZ2d+qVGtidAdEiJ9WxqJkXmMtkUmn+zkFpKylHWoXlmzlPGHPK6XhQ==
+"@nightingale-elements/nightingale-structure@5.10.3":
+  version "5.10.3"
+  resolved "https://registry.yarnpkg.com/@nightingale-elements/nightingale-structure/-/nightingale-structure-5.10.3.tgz#92fbba4f6b1521442af1899dcbadc694e544395f"
+  integrity sha512-cI9rcrBQaVX555B8sAbL17DITETjB5DGh27zx4vWHwjVQn+O2gMgbJTJ6mpNdeGHeZQqnHPlgZlRPjTF692XSA==
   dependencies:
     "@nightingale-elements/nightingale-new-core" "^5.6.0"
     d3 "7.9.0"
@@ -513,7 +513,7 @@
     d3 "7.9.0"
     lodash-es "4.17.15"
 
-"@nightingale-elements/nightingale-variation-canvas@^5.10.1":
+"@nightingale-elements/nightingale-variation-canvas@5.10.1":
   version "5.10.1"
   resolved "https://registry.yarnpkg.com/@nightingale-elements/nightingale-variation-canvas/-/nightingale-variation-canvas-5.10.1.tgz#728be21266c546b82dd8d7cfb64211e6a76145f2"
   integrity sha512-cs/xRyziWrAb+ZQcs2ghINrsWwqh7UyXS/psEs7ovUsnn8WdV1UiE0gCt+x5yU5GjWkdSFelY5AUKYTf2rEwnw==
@@ -4938,10 +4938,10 @@ lit@3.1.3:
     lit-element "^4.0.4"
     lit-html "^3.1.2"
 
-lit@3.3.2:
-  version "3.3.2"
-  resolved "https://registry.yarnpkg.com/lit/-/lit-3.3.2.tgz#d9230ebbf237bfd3d2091bc0b56c576a470ac4d7"
-  integrity sha512-NF9zbsP79l4ao2SNrH3NkfmFgN/hBYSQo90saIVI1o5GpjAdCPVstVzO1MrLOakHoEhYkrtRjPK6Ob521aoYWQ==
+lit@3.3.3:
+  version "3.3.3"
+  resolved "https://registry.yarnpkg.com/lit/-/lit-3.3.3.tgz#93579885e51a20a772c68482a34706fe1636e8f0"
+  integrity sha512-fycuvZg/hkpozL00lm1pEJH5nN/lr9ZXd6mJI2HSN4+Bzc+LDNdEApJ6HFbPkdFNHLvOplIIuJvxkS4XUxqirw==
   dependencies:
     "@lit/reactive-element" "^2.1.0"
     lit-element "^4.2.0"
