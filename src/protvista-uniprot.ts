@@ -197,6 +197,10 @@ class ProtvistaUniprot extends LitElement {
     x: number;
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
+  // Tracks the exact data reference last pushed into each heatmap so
+  // _loadDataInComponents (which runs after every lit update) doesn't
+  // rebuild heatmaps that already display the current data.
+  private _assignedHeatmapData = new WeakMap<object, unknown>();
   private _onOutsideClick = (e: MouseEvent) => {
     if (!(e.target as Element)?.closest?.('protvista-uniprot')) {
       this._hideTooltip();
@@ -463,10 +467,13 @@ class ProtvistaUniprot extends LitElement {
           const elementTrack = document.getElementById(
             `track-${id}-${track.name}`
           ) as NightingaleTrackCanvas | null;
-          if (elementTrack) {
-            elementTrack.data = this.data[
-              `${id}-${track.name}`
-            ] as NightingaleTrackCanvas['data'];
+          const trackData = this.data[`${id}-${track.name}`];
+          // Only assign when the data actually changed: setting `.data`
+          // makes the track re-process and redraw everything, which is very
+          // expensive for dense tracks (e.g. 240k+ variants for TITIN) and
+          // this method runs after every lit update.
+          if (elementTrack && elementTrack.data !== trackData) {
+            elementTrack.data = trackData as NightingaleTrackCanvas['data'];
           }
         }
       }
@@ -487,6 +494,14 @@ class ProtvistaUniprot extends LitElement {
                 yValue: string;
                 score: number;
               }[];
+              // setHeatmapData rebuilds the whole heatmap; skip if this
+              // exact data has already been pushed to this component.
+              if (
+                this._assignedHeatmapData.get(heatmapComponent) === heatmapData
+              ) {
+                continue;
+              }
+              this._assignedHeatmapData.set(heatmapComponent, heatmapData);
               const xDomain = Array.from(
                 { length: this.sequence.length },
                 (_, i) => i + 1
