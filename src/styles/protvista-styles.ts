@@ -98,6 +98,35 @@ export default css`
     --protvista-link-color: #00639a;
   }
 
+  .protvista-goto {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    flex-wrap: wrap;
+  }
+
+  .protvista-goto input {
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--protvista-track-background);
+    border-radius: 3px;
+    min-width: 15rem;
+  }
+
+  .protvista-goto button {
+    padding: 0.25rem 0.7rem;
+    border: none;
+    border-radius: 3px;
+    background: var(--protvista-category-background);
+    color: var(--protvista-category-color);
+    cursor: pointer;
+  }
+
+  .protvista-goto__error {
+    color: #b00020;
+  }
+
   .category-label {
     background-color: var(--protvista-category-background);
     color: var(--protvista-category-color);

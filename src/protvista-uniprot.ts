@@ -46,6 +46,12 @@ import config, {
   TrackType,
 } from './config';
 import { validateConfig, formatConfigErrors } from './config-validator';
+import {
+  parseGoTo,
+  genomeToProtein,
+  selectCoordinate,
+  GnCoordinate,
+} from './utils/coordinate-navigation';
 
 import { TransformedInterPro } from './adapters/types/interpro';
 import { StructureFeature } from './adapters/structure-adapter';
@@ -202,6 +208,8 @@ class ProtvistaUniprot extends LitElement {
     x: number;
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
+  private gotoError?: string;
+  private _genomicCoordinates?: Promise<GnCoordinate[] | undefined>;
   // Data waiting to be pushed into a track element once it scrolls into
   // view. Feeding a dense track is expensive (full re-process + draw), so
   // offscreen tracks are deferred - the pattern EBI ships upstream as
@@ -553,6 +561,122 @@ class ProtvistaUniprot extends LitElement {
     });
   }
 
+  _handleGoToSubmit(e: Event) {
+    e.preventDefault();
+    const input = (e.target as HTMLFormElement).elements.namedItem(
+      'goto'
+    ) as HTMLInputElement;
+    this.goTo(input.value);
+  }
+
+  _setGotoError(message?: string) {
+    this.gotoError = message;
+    this.requestUpdate();
+  }
+
+  /** Broadcast a view change through nightingale-manager */
+  _navigateTo(start: number, end: number, highlight?: string) {
+    const emitter = this.querySelector('nightingale-navigation');
+    if (!emitter) return;
+    this.displayCoordinates = { start, end };
+    emitter.dispatchEvent(
+      new CustomEvent('change', {
+        detail: {
+          displaystart: start,
+          displayend: end,
+          ...(highlight ? { highlight } : {}),
+        },
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+  }
+
+  /**
+   * Jump to a protein range ("188-198"), a residue with optional amino-acid
+   * validation ("185S"/"S185"), or a genomic coordinate mapped through the
+   * Proteins API coordinates payload ("g:21:25897620").
+   */
+  async goTo(rawQuery: string) {
+    const length = this.sequence?.length;
+    if (!length) return;
+    const target = parseGoTo(rawQuery);
+    if (!target) {
+      this._setGotoError(
+        `Couldn't understand "${rawQuery}". Try 188-198, 185S or g:21:25897620`
+      );
+      return;
+    }
+
+    if (target.kind === 'range') {
+      const start = Math.min(target.start, length);
+      const end = Math.min(target.end, length);
+      this._setGotoError(undefined);
+      this._navigateTo(start, end, `${start}:${end}`);
+      return;
+    }
+
+    let position: number;
+    if (target.kind === 'genomic') {
+      const coordinates = await this._loadGenomicCoordinates();
+      const coordinate = selectCoordinate(coordinates, target.chromosome);
+      const mapped = coordinate && genomeToProtein(coordinate, target.position);
+      if (!mapped) {
+        this._setGotoError(
+          `Genomic position ${target.position} doesn't map onto ${this.accession} (intron or outside the gene?)`
+        );
+        return;
+      }
+      position = mapped;
+    } else {
+      position = target.position;
+      if (position > length) {
+        this._setGotoError(
+          `Position ${position} is beyond the sequence (length ${length})`
+        );
+        return;
+      }
+      const actual = this.sequence?.charAt(position - 1).toUpperCase();
+      if (target.aa && actual !== target.aa) {
+        this._setGotoError(
+          `Residue ${position} is ${actual}, not ${target.aa}`
+        );
+        return;
+      }
+    }
+
+    const start = Math.max(1, position - 15);
+    const end = Math.min(length, position + 15);
+    this._setGotoError(undefined);
+    this._navigateTo(start, end, `${position}:${position}`);
+  }
+
+  _loadGenomicCoordinates(): Promise<GnCoordinate[] | undefined> {
+    if (!this._genomicCoordinates) {
+      this._genomicCoordinates = (async () => {
+        try {
+          const response = await fetch(
+            `https://www.ebi.ac.uk/proteins/api/coordinates/${this.accession}`,
+            // Without the explicit Accept header this endpoint returns XML
+            { headers: { Accept: 'application/json' } }
+          );
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const payload = (await response.json()) as {
+            gnCoordinate?: GnCoordinate[];
+          };
+          return payload.gnCoordinate;
+        } catch (e) {
+          console.error(
+            `Couldn't load genomic coordinates for ${this.accession}`,
+            e
+          );
+          return undefined;
+        }
+      })();
+    }
+    return this._genomicCoordinates;
+  }
+
   /**
    * Clear all per-protein state. Without this, switching the accession at
    * runtime keeps showing the previous protein's tracks (and mixes them
@@ -570,6 +694,8 @@ class ProtvistaUniprot extends LitElement {
     this._pendingCategoryOpens.clear();
     this.tooltip = { ...this.tooltip, visible: false };
     this.displayCoordinates = {};
+    this.gotoError = undefined;
+    this._genomicCoordinates = undefined;
     // The open/closed arrow state is toggled imperatively via classList,
     // so lit won't reset it on re-render
     this.querySelectorAll('.category-label.open').forEach((el) =>
@@ -819,6 +945,22 @@ class ProtvistaUniprot extends LitElement {
       <nightingale-manager
         reflected-attributes="length display-start display-end highlight activefilters filters"
       >
+        <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
+          <label for="protvista-goto-input">Go to</label>
+          <input
+            id="protvista-goto-input"
+            name="goto"
+            type="text"
+            placeholder="188-198 · 185S · g:21:25897620"
+            title="Jump to a residue range (188-198), a residue with amino-acid check (185S), or a genomic coordinate (g:<chromosome>:<position>)"
+          />
+          <button type="submit">Go</button>
+          ${this.gotoError
+            ? html`<span class="protvista-goto__error" role="alert"
+                >${this.gotoError}</span
+              >`
+            : ''}
+        </form>
         <div class="nav-container">
           <div class="nav-track-label"></div>
           <div class="track-content">
