@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseGoTo,
   genomeToProtein,
+  genomeToProteinNearest,
   selectCoordinate,
   clampWindow,
   GnCoordinate,
@@ -175,5 +176,90 @@ describe('clampWindow', () => {
 
   it('handles sequences shorter than the minimum span', () => {
     expect(clampWindow(2, 2, 10)).toEqual({ start: 1, end: 10 });
+  });
+});
+
+describe('parseGoTo genomic forms (UniProt entry-page paste)', () => {
+  it('parses bare chr:pos', () => {
+    expect(parseGoTo('2:178527015')).toEqual({
+      kind: 'genomic',
+      chromosome: '2',
+      position: 178527015,
+      endPosition: undefined,
+    });
+  });
+
+  it('parses the UniProt genomic-location format with commas and spaces', () => {
+    expect(parseGoTo('2:178,527,015 - 178,804,642')).toEqual({
+      kind: 'genomic',
+      chromosome: '2',
+      position: 178527015,
+      endPosition: 178804642,
+    });
+  });
+
+  it('parses g:-prefixed ranges', () => {
+    expect(parseGoTo('g:2:178527015-178804642')).toEqual({
+      kind: 'genomic',
+      chromosome: '2',
+      position: 178527015,
+      endPosition: 178804642,
+    });
+  });
+
+  it('chr:pos is NOT swallowed by the protein-range pattern', () => {
+    const t = parseGoTo('2:178527015');
+    expect(t?.kind).toBe('genomic');
+  });
+
+  it('still parses protein ranges with dashes (and commas)', () => {
+    expect(parseGoTo('1,000-2,000')).toEqual({
+      kind: 'range',
+      start: 1000,
+      end: 2000,
+    });
+  });
+});
+
+describe('genomeToProteinNearest (UTR/gene-boundary snapping)', () => {
+  const forward: GnCoordinate = {
+    genomicLocation: {
+      chromosome: '1',
+      reverseStrand: false,
+      exon: [
+        {
+          proteinLocation: { begin: { position: 1 }, end: { position: 10 } },
+          genomeLocation: {
+            begin: { position: 1000 },
+            end: { position: 1029 },
+          },
+        },
+      ],
+    },
+  };
+
+  it('returns exact mappings unchanged', () => {
+    expect(genomeToProteinNearest(forward, 1003)).toEqual({
+      residue: 2,
+      exact: true,
+    });
+  });
+
+  it("snaps a 5' UTR position to the first residue", () => {
+    expect(genomeToProteinNearest(forward, 950)).toEqual({
+      residue: 1,
+      exact: false,
+    });
+  });
+
+  it("snaps a 3' position to the last residue", () => {
+    expect(genomeToProteinNearest(forward, 1100)).toEqual({
+      residue: 10,
+      exact: false,
+    });
+  });
+
+  it('rejects positions more than 10kb from the gene', () => {
+    expect(genomeToProteinNearest(forward, 500000)).toBe(undefined);
   });
 });

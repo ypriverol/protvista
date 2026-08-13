@@ -48,7 +48,7 @@ import config, {
 import { validateConfig, formatConfigErrors } from './config-validator';
 import {
   parseGoTo,
-  genomeToProtein,
+  genomeToProteinNearest,
   selectCoordinate,
   clampWindow,
   GnCoordinate,
@@ -631,14 +631,29 @@ class ProtvistaUniprot extends LitElement {
     if (target.kind === 'genomic') {
       const coordinates = await this._loadGenomicCoordinates();
       const coordinate = selectCoordinate(coordinates, target.chromosome);
-      const mapped = coordinate && genomeToProtein(coordinate, target.position);
+      const mapped =
+        coordinate && genomeToProteinNearest(coordinate, target.position);
       if (!mapped) {
         this._setGotoError(
-          `Genomic position ${target.position} doesn't map onto ${this.accession} (intron or outside the gene?)`
+          `Genomic position ${target.position} doesn't map onto ${this.accession} (more than 10kb outside the gene?)`
         );
         return;
       }
-      position = mapped;
+      // Gene-level coordinates (e.g. pasted from a UniProt entry page) may
+      // span the whole gene: map both ends and show the covered residues
+      if (target.endPosition !== undefined) {
+        const mappedEnd = coordinate
+          ? genomeToProteinNearest(coordinate, target.endPosition)
+          : undefined;
+        if (mappedEnd) {
+          const start = Math.min(mapped.residue, mappedEnd.residue);
+          const end = Math.max(mapped.residue, mappedEnd.residue);
+          this._setGotoError(undefined);
+          this._navigateTo(start, end, `${start}:${end}`);
+          return;
+        }
+      }
+      position = mapped.residue;
     } else {
       position = target.position;
       if (position > length) {

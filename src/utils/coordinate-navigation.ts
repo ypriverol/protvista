@@ -8,27 +8,47 @@
 export type GoToTarget =
   | { kind: 'range'; start: number; end: number }
   | { kind: 'residue'; position: number; aa?: string }
-  | { kind: 'genomic'; chromosome?: string; position: number };
+  | {
+      kind: 'genomic';
+      chromosome?: string;
+      position: number;
+      endPosition?: number;
+    };
 
-const RANGE_RE = /^(\d+)\s*[-–:]\s*(\d+)$/;
+// ':' is NOT a protein-range separator: '2:178527015' must parse as
+// chromosome 2, not as a residue range
+const RANGE_RE = /^([\d,]+)\s*[-–]\s*([\d,]+)$/;
 const RESIDUE_RE = /^(?:([A-Za-z])\s*)?(\d+)\s*([A-Za-z])?$/;
-const GENOMIC_RE = /^g(?:enome)?\s*:\s*(?:(?:chr)?([\w.]+)\s*:\s*)?([\d,]+)$/i;
+// Explicit prefix form: g:..., with optional chromosome and optional range
+const GENOMIC_PREFIX_RE =
+  /^g(?:enome)?\s*:\s*(?:(?:chr)?([\w.]+)\s*:\s*)?([\d,]+)(?:\s*[-–]\s*([\d,]+))?$/i;
+// Bare form as shown on UniProt entry pages: 2:178,527,015 - 178,804,642
+const GENOMIC_BARE_RE =
+  /^(?:chr)?(\d{1,2}|[XY]|MT)\s*:\s*([\d,]+)(?:\s*[-–]\s*([\d,]+))?$/i;
+
+const toPosition = (value: string | undefined): number | undefined => {
+  if (value === undefined) return undefined;
+  const n = Number(value.replace(/,/g, ''));
+  return Number.isInteger(n) && n >= 1 ? n : undefined;
+};
 
 export const parseGoTo = (raw: string): GoToTarget | null => {
   const query = raw.trim();
   if (!query) return null;
 
-  const genomic = query.match(GENOMIC_RE);
+  const genomic =
+    query.match(GENOMIC_PREFIX_RE) ?? query.match(GENOMIC_BARE_RE);
   if (genomic) {
-    const position = Number(genomic[2].replace(/,/g, ''));
-    if (!Number.isInteger(position) || position < 1) return null;
-    return { kind: 'genomic', chromosome: genomic[1], position };
+    const position = toPosition(genomic[2]);
+    if (position === undefined) return null;
+    const endPosition = toPosition(genomic[3]);
+    return { kind: 'genomic', chromosome: genomic[1], position, endPosition };
   }
 
   const range = query.match(RANGE_RE);
   if (range) {
-    let start = Number(range[1]);
-    let end = Number(range[2]);
+    let start = toPosition(range[1]) ?? 0;
+    let end = toPosition(range[2]) ?? 0;
     if (start < 1 || end < 1) return null;
     if (end < start) [start, end] = [end, start];
     return { kind: 'range', start, end };
@@ -154,4 +174,51 @@ export const clampWindow = (
     }
   }
   return { start: s, end: e };
+};
+
+/**
+ * Like genomeToProtein but snaps positions that fall outside every coding
+ * exon (UTRs, introns, gene-level boundaries as shown on UniProt entry
+ * pages) to the nearest exon edge, as long as they are within ~10kb of the
+ * gene. Returns the residue and whether the mapping was exact.
+ */
+export const genomeToProteinNearest = (
+  coordinate: GnCoordinate,
+  genomicPosition: number
+): { residue: number; exact: boolean } | undefined => {
+  const exact = genomeToProtein(coordinate, genomicPosition);
+  if (exact !== undefined) return { residue: exact, exact: true };
+  const location = coordinate.genomicLocation;
+  if (!location?.exon) return undefined;
+  const reverse = Boolean(location.reverseStrand);
+  let best: { residue: number; distance: number } | undefined;
+  for (const exon of location.exon) {
+    const gBegin = exon.genomeLocation?.begin?.position;
+    const gEnd = exon.genomeLocation?.end?.position;
+    const pBegin = exon.proteinLocation?.begin?.position;
+    const pEnd = exon.proteinLocation?.end?.position;
+    if (
+      gBegin === undefined ||
+      gEnd === undefined ||
+      pBegin === undefined ||
+      pEnd === undefined
+    ) {
+      continue;
+    }
+    const lo = Math.min(gBegin, gEnd);
+    const hi = Math.max(gBegin, gEnd);
+    // Which protein position sits at each genomic edge depends on strand
+    const loResidue = reverse ? pEnd : pBegin;
+    const hiResidue = reverse ? pBegin : pEnd;
+    const candidates: [number, number][] =
+      genomicPosition < lo
+        ? [[lo - genomicPosition, loResidue]]
+        : [[genomicPosition - hi, hiResidue]];
+    for (const [distance, residue] of candidates) {
+      if (!best || distance < best.distance) best = { residue, distance };
+    }
+  }
+  const MAX_SNAP_DISTANCE = 10_000;
+  if (!best || best.distance > MAX_SNAP_DISTANCE) return undefined;
+  return { residue: best.residue, exact: false };
 };
