@@ -201,11 +201,17 @@ class ProtvistaUniprot extends LitElement {
   // stay mounted (hidden) on collapse so re-expanding is instant instead of
   // re-processing all the data.
   private everOpenedCategories = new Set<string>();
+  // Category opens deferred to the next frame that haven't fired yet; a
+  // close click in between removes the entry to cancel the expansion.
+  private _pendingCategoryOpens = new Set<string>();
   // Tracks the exact data reference last pushed into each heatmap so
   // _loadDataInComponents (which runs after every lit update) doesn't
   // rebuild heatmaps that already display the current data.
   private _assignedHeatmapData = new WeakMap<object, unknown>();
   private _onOutsideClick = (e: MouseEvent) => {
+    // notooltip is checked here (not at listener registration) so toggling
+    // it at runtime behaves correctly without leaking/losing the listener
+    if (this.notooltip) return;
     if (!(e.target as Element)?.closest?.('protvista-uniprot')) {
       this._hideTooltip();
     }
@@ -420,6 +426,11 @@ class ProtvistaUniprot extends LitElement {
       });
 
       await Promise.all(categoryTasks);
+
+      // Every category has been transformed into this.data; release the raw
+      // payloads (e.g. ~85MB of TITIN variation JSON) instead of pinning
+      // them in memory for the component's lifetime.
+      this.rawData = {};
     }
     this.loading = false;
     markOnce('protvista:data-loaded');
@@ -434,9 +445,9 @@ class ProtvistaUniprot extends LitElement {
   async _loadDataInComponents() {
     await frame();
     Object.entries(this.data).forEach(([id, data]) => {
-      const element: NightingaleTrackCanvas | null = document.getElementById(
-        `track-${id}`
-      ) as NightingaleTrackCanvas;
+      const element: NightingaleTrackCanvas | null = this.querySelector(
+        `#${CSS.escape(`track-${id}`)}`
+      );
 
       // set data if it hasn't changed
       if (element && element.data !== data) {
@@ -461,16 +472,15 @@ class ProtvistaUniprot extends LitElement {
           (dataAsArray.variants?.length ?? 0) > 0)
       ) {
         // Make category element visible
-        const categoryElt = document.getElementById(
-          `category_${currentCategory.name}`
+        const categoryElt = this.querySelector<HTMLElement>(
+          `#${CSS.escape(`category_${currentCategory.name}`)}`
         );
         if (categoryElt) {
           categoryElt.style.display = 'flex';
         }
         for (const track of currentCategory.tracks) {
-          const elementTrack = document.getElementById(
-            `track-${id}-${track.name}`
-          ) as NightingaleTrackCanvas | null;
+          const elementTrack: NightingaleTrackCanvas | null =
+            this.querySelector(`#${CSS.escape(`track-${id}-${track.name}`)}`);
           const trackData = this.data[`${id}-${track.name}`];
           // Only assign when the data actually changed: setting `.data`
           // makes the track re-process and redraw everything, which is very
@@ -532,8 +542,43 @@ class ProtvistaUniprot extends LitElement {
     });
   }
 
+  /**
+   * Clear all per-protein state. Without this, switching the accession at
+   * runtime keeps showing the previous protein's tracks (and mixes them
+   * with the new protein's data as it arrives).
+   */
+  _resetViewerState() {
+    this.data = {};
+    this.rawData = {};
+    this.hasData = false;
+    this.loading = true;
+    this.sequence = undefined;
+    this.transformedVariants = { sequence: '', variants: [] };
+    this.openCategories = [];
+    this.everOpenedCategories.clear();
+    this._pendingCategoryOpens.clear();
+    this.tooltip = { ...this.tooltip, visible: false };
+    this.displayCoordinates = {};
+    // The open/closed arrow state is toggled imperatively via classList,
+    // so lit won't reset it on re-render
+    this.querySelectorAll('.category-label.open').forEach((el) =>
+      el.classList.remove('open')
+    );
+  }
+
   updated(changedProperties: Map<string, string>) {
     super.updated(changedProperties);
+
+    // React to runtime accession changes (get() returns the previous value;
+    // undefined means this is the initial set handled by connectedCallback)
+    if (
+      changedProperties.has('accession') &&
+      changedProperties.get('accession') !== undefined
+    ) {
+      this._resetViewerState();
+      this._init();
+      return;
+    }
 
     // First render with content — manager is in the DOM, not the loader.
     if (this.hasData && !this.loading) {
@@ -617,9 +662,7 @@ class ProtvistaUniprot extends LitElement {
       }
     });
 
-    if (!this.notooltip) {
-      document.addEventListener('click', this._onOutsideClick);
-    }
+    document.addEventListener('click', this._onOutsideClick);
   }
 
   disconnectedCallback() {
@@ -958,14 +1001,22 @@ class ProtvistaUniprot extends LitElement {
       // elements for a dense category blocks the main thread, and without
       // the deferral the click appears dead until the work finishes.
       target.classList.add('open');
+      this._pendingCategoryOpens.add(toggle);
       requestAnimationFrame(() => {
         setTimeout(() => {
+          // A close click in the meantime cancels the pending expansion;
+          // without this check the deferred callback would force the
+          // category back open against the user's last action
+          if (!this._pendingCategoryOpens.delete(toggle)) return;
           this.everOpenedCategories.add(toggle);
-          this.openCategories = [...this.openCategories, toggle];
+          if (!this.openCategories.includes(toggle)) {
+            this.openCategories = [...this.openCategories, toggle];
+          }
         }, 0);
       });
     } else {
       target.classList.remove('open');
+      if (toggle) this._pendingCategoryOpens.delete(toggle);
       this.openCategories = [...this.openCategories].filter(
         (d) => d !== toggle
       );

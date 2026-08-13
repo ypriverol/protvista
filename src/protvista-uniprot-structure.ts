@@ -39,11 +39,20 @@ const PDBE_ENTRY_FILES_URL = 'https://www.ebi.ac.uk/pdbe/entry-files/download/';
  * too, shows the error in the viewer instead of throwing.
  */
 export class ResilientNightingaleStructure extends NightingaleStructure {
+  // Incremented on every selection; guards the fallback path so a stale
+  // failure can't mutate custom-download-url for a newer selection that is
+  // already in flight (upstream calls selectMolecule un-awaited from
+  // updated() whenever structure-id changes).
+  private _selectionToken = 0;
+
   async selectMolecule(): Promise<void> {
+    const token = ++this._selectionToken;
     try {
       await super.selectMolecule();
       return;
     } catch (modelServerError) {
+      // A newer selection has started; let it drive the element
+      if (token !== this._selectionToken) return;
       const structureId = this['structure-id'];
       const canFallback =
         structureId &&
@@ -74,6 +83,9 @@ export class ResilientNightingaleStructure extends NightingaleStructure {
           modelServerError
         );
       }
+      // Superseded while falling back: don't overwrite the newer
+      // selection's message
+      if (token !== this._selectionToken) return;
       // showMessage is private in the upstream typings but callable
       (
         this as unknown as {

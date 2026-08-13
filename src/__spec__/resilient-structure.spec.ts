@@ -24,6 +24,7 @@ type TestInstance = {
   'custom-download-url'?: string;
   showMessage: ReturnType<typeof vi.fn>;
   selectMolecule(): Promise<void>;
+  _selectionToken: number;
 };
 
 const createInstance = (structureId?: string): TestInstance => {
@@ -32,6 +33,9 @@ const createInstance = (structureId?: string): TestInstance => {
   ) as unknown as TestInstance;
   instance['structure-id'] = structureId;
   instance.showMessage = vi.fn();
+  // Class-field initializers only run in the constructor, which
+  // Object.create bypasses
+  instance._selectionToken = 0;
   return instance;
 };
 
