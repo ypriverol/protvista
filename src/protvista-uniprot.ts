@@ -36,7 +36,7 @@ import alphaMissenseHeatmapAdapter from './adapters/alphamissense-heatmap-adapte
 
 import ProtvistaUniprotStructure from './protvista-uniprot-structure';
 
-import { fetchAll, loadComponent } from './utils';
+import { fetchOne, loadComponent } from './utils';
 
 import filterConfig, { colorConfig } from './filter-config';
 import config, {
@@ -237,6 +237,30 @@ class ProtvistaUniprot extends LitElement {
     loadComponent('nightingale-sequence-heatmap', NightingaleSequenceHeatmap);
   }
 
+  /**
+   * Mark that at least one endpoint returned usable data: dismisses the
+   * loader and fires the public protvista-event exactly once. Called as
+   * payloads arrive so that one slow endpoint (e.g. 85MB of variants for
+   * TITIN) never blanks the whole viewer.
+   */
+  _onDataAvailable(payload: unknown) {
+    // Some endpoints return empty arrays, while most fail 🙄
+    if (payload && typeof payload === 'object' && 'features' in payload) {
+      const features = (payload as { features?: unknown[] }).features;
+      if (Array.isArray(features) && features.length > 0 && !this.hasData) {
+        this.hasData = true;
+        this.loading = false;
+        this.dispatchEvent(
+          new CustomEvent('protvista-event', {
+            detail: { hasData: true },
+            bubbles: true,
+          })
+        );
+        this.requestUpdate();
+      }
+    }
+  }
+
   async _loadData() {
     const accession = this.accession;
     if (accession && this.config) {
@@ -245,39 +269,30 @@ class ProtvistaUniprot extends LitElement {
         tracks.flatMap(({ data }) => data[0].url)
       );
 
-      // Get the data for all urls and store it
-      this.rawData = await fetchAll([...new Set(urls)], (url: string) =>
-        url.replace('{accession}', accession)
+      // Kick off every fetch immediately, but do NOT await them as a batch:
+      // each category below only waits for its own urls, so fast tracks
+      // render while slow ones are still downloading.
+      const pending = new Map<string, Promise<unknown>>(
+        [...new Set(urls)].map((url) => [
+          url,
+          fetchOne(url.replace('{accession}', accession)).then((payload) => {
+            this.rawData[url] = payload as TrackPayload;
+            this._onDataAvailable(payload);
+            return payload;
+          }),
+        ])
       );
 
-      // Some endpoints return empty arrays, while most fail 🙄
-      const wasHasData = this.hasData;
-      this.hasData =
-        this.hasData ||
-        Object.values(this.rawData).some((d) => {
-          if (d && typeof d === 'object' && 'features' in d) {
-            const features = (d as { features?: unknown[] }).features;
-            return Array.isArray(features) && features.length > 0;
-          }
-          return false;
-        });
-
-      // Fire the public protvista-event the moment data first becomes
-      // available. (Previously this was hung off a `'load'` listener that
-      // never fired — see `connectedCallback` history.)
-      if (this.hasData && !wasHasData) {
-        this.dispatchEvent(
-          new CustomEvent('protvista-event', {
-            detail: { hasData: true },
-            bubbles: true,
-          })
-        );
-      }
-
       // Now iterate over tracks and categories, transforming the data
-      // and assigning it as adequate
-      for (const { name: categoryName, tracks, trackType } of this.config
-        .categories) {
+      // and assigning it as adequate. Categories are processed
+      // independently and rendered as soon as their own data arrives.
+      const categoryTasks = this.config.categories.map(async (category) => {
+        const { name: categoryName, tracks, trackType } = category;
+        // Wait only for the urls this category actually uses
+        const categoryUrls = new Set(
+          tracks.flatMap(({ data }) => data[0].url).flat()
+        );
+        await Promise.all([...categoryUrls].map((url) => pending.get(url)));
         const categoryData = await Promise.all(
           tracks.map(async ({ data: dataConfig, name: trackName, filter }) => {
             const { url, adapter } = dataConfig[0]; // TODO handle array
@@ -349,7 +364,13 @@ class ProtvistaUniprot extends LitElement {
           trackType === 'nightingale-colored-sequence'
             ? categoryData[0]
             : (categoryData.flat() as Record<string, unknown>[]);
-      }
+
+        // Re-render now: this category is ready even if others are still
+        // fetching. `updated()` pushes the new data into the track elements.
+        this.requestUpdate();
+      });
+
+      await Promise.all(categoryTasks);
     }
     this.loading = false;
     markOnce('protvista:data-loaded');
