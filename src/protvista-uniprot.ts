@@ -584,6 +584,7 @@ class ProtvistaUniprot extends LitElement {
     const emitter = this.querySelector('nightingale-navigation');
     emitter?.dispatchEvent(
       new CustomEvent('change', {
+        // key must match the manager's observed attribute name
         detail: { highlight },
         bubbles: true,
         cancelable: true,
