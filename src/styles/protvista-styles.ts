@@ -127,6 +127,22 @@ export default css`
     color: #b00020;
   }
 
+  .structure-toggle {
+    float: right;
+    font-size: 0.7rem;
+    color: var(--protvista-link-color);
+    cursor: pointer;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+  }
+
+  .structure-toggle input {
+    margin: 0;
+    cursor: pointer;
+  }
+
   .category-label {
     background-color: var(--protvista-category-background);
     color: var(--protvista-category-color);
