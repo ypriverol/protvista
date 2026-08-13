@@ -486,6 +486,8 @@ class ProtvistaUniprotStructure extends LitElement {
   private columns: ColumnConfig<ProcessedStructureData>[] = [];
   selectedId?: string;
   noTable?: boolean;
+  /** Residue ranges ("s:e,s:e") forwarded to the 3D viewer */
+  highlight?: string;
 
   constructor() {
     super();
@@ -503,6 +505,7 @@ class ProtvistaUniprotStructure extends LitElement {
 
   static get properties() {
     return {
+      highlight: { type: String },
       accession: { type: String },
       structureId: { type: String },
       checksum: { type: String },
@@ -884,11 +887,13 @@ class ProtvistaUniprotStructure extends LitElement {
                 structure-id=${this.structureId}
                 protein-accession=${this.accession}
                 color-theme=${this.colorTheme}
+                highlight=${this.highlight || ''}
               ></nightingale-structure>`
             : nothing}
           ${this.modelUrl
             ? html`<nightingale-structure
                 model-url=${this.modelUrl}
+                highlight=${this.highlight || ''}
               ></nightingale-structure>`
             : nothing}
         </div>

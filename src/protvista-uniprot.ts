@@ -589,25 +589,12 @@ class ProtvistaUniprot extends LitElement {
         cancelable: true,
       })
     );
-    // nightingale-structure does NOT register with the manager, so the
-    // 3D pane must be driven directly (it maps the UniProt ranges onto
-    // the structure through its SIFTS mappings)
+    // nightingale-structure does NOT register with the manager; the
+    // highlight is passed down declaratively through
+    // protvista-uniprot-structure (see render), which keeps it applied
+    // even when the user switches to a different structure afterwards
     this._structureGroupHighlight = highlight;
-    this._applyStructureHighlight();
     this.requestUpdate();
-  }
-
-  _applyStructureHighlight() {
-    const highlight = this._structureGroupHighlight;
-    this.querySelectorAll('nightingale-structure').forEach((el) => {
-      if (highlight) {
-        if (el.getAttribute('highlight') !== highlight) {
-          el.setAttribute('highlight', highlight);
-        }
-      } else if (el.hasAttribute('highlight')) {
-        el.removeAttribute('highlight');
-      }
-    });
   }
 
   _handleStructureToggle(e: Event) {
@@ -821,10 +808,6 @@ class ProtvistaUniprot extends LitElement {
         'protvista:first-render'
       );
     }
-
-    // A structure selected after the toggle mounts a fresh
-    // nightingale-structure element; re-apply the group highlight to it
-    if (this._structureGroupHighlight) this._applyStructureHighlight();
 
     const filterComponent =
       this.querySelector<NightingaleFilter>('nightingale-filter');
@@ -1216,6 +1199,7 @@ class ProtvistaUniprot extends LitElement {
           ? html`
               <protvista-uniprot-structure
                 accession="${this.accession || ''}"
+                .highlight=${this._structureGroupHighlight}
               ></protvista-uniprot-structure>
             `
           : ''}
