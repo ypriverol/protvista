@@ -949,30 +949,30 @@ class ProtvistaUniprot extends LitElement {
       </div>`;
     }
     return html`
+      <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
+        <div class="protvista-goto__row">
+          <label for="protvista-goto-input">Go to position</label>
+          <input
+            id="protvista-goto-input"
+            name="goto"
+            type="text"
+            placeholder="e.g. 188-198"
+          />
+          <button type="submit">Go</button>
+        </div>
+        ${this.gotoError
+          ? html`<span class="protvista-goto__error" role="alert"
+              >${this.gotoError}</span
+            >`
+          : html`<span class="protvista-goto__hint"
+              >range <code>188-198</code> · residue with check
+              <code>185S</code> · genomic position
+              <code>g:21:25897620</code></span
+            >`}
+      </form>
       <nightingale-manager
         reflected-attributes="length display-start display-end highlight activefilters filters"
       >
-        <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
-          <div class="protvista-goto__row">
-            <label for="protvista-goto-input">Go to position</label>
-            <input
-              id="protvista-goto-input"
-              name="goto"
-              type="text"
-              placeholder="e.g. 188-198"
-            />
-            <button type="submit">Go</button>
-          </div>
-          ${this.gotoError
-            ? html`<span class="protvista-goto__error" role="alert"
-                >${this.gotoError}</span
-              >`
-            : html`<span class="protvista-goto__hint"
-                >range <code>188-198</code> · residue with check
-                <code>185S</code> · genomic position
-                <code>g:21:25897620</code></span
-              >`}
-        </form>
         <div class="nav-container">
           <div class="nav-track-label"></div>
           <div class="track-content">
