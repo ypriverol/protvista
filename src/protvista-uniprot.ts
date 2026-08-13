@@ -180,6 +180,7 @@ type NightingaleEvent = Event & {
     eventType?: 'click' | 'mouseover' | 'mouseout' | 'reset';
     feature?: unknown;
     coords?: [number, number];
+    highlight?: string;
   };
 };
 
@@ -214,6 +215,14 @@ class ProtvistaUniprot extends LitElement {
   // on the 3D structure (and across all tracks) as a group
   private structureHighlightTracks = new Set<string>();
   private _structureGroupHighlight = '';
+  // Range of the last clicked 1D feature, mirrored onto the 3D structure
+  private _clickedFeatureHighlight = '';
+
+  get _combinedStructureHighlight(): string {
+    return [this._structureGroupHighlight, this._clickedFeatureHighlight]
+      .filter(Boolean)
+      .join(',');
+  }
   private _genomicCoordinates?: Promise<GnCoordinate[] | undefined>;
   // Data waiting to be pushed into a track element once it scrolls into
   // view. Feeding a dense track is expensive (full re-process + draw), so
@@ -741,6 +750,7 @@ class ProtvistaUniprot extends LitElement {
     this._genomicCoordinates = undefined;
     this.structureHighlightTracks.clear();
     this._structureGroupHighlight = '';
+    this._clickedFeatureHighlight = '';
     // The open/closed arrow state is toggled imperatively via classList,
     // so lit won't reset it on re-render
     this.querySelectorAll('.category-label.open').forEach((el) =>
@@ -867,12 +877,50 @@ class ProtvistaUniprot extends LitElement {
         this.displayCoordinates.end = e.detail.displayend;
       }
 
+      // 3D -> 1D: a residue selection made inside the Mol* viewer arrives
+      // as a change event from nightingale-structure carrying only a
+      // highlight; bring the 1D view to that region so both stay in sync
+      if (
+        typeof e.detail?.highlight === 'string' &&
+        e.detail.highlight &&
+        (e.target as Element)?.tagName?.toLowerCase() ===
+          'nightingale-structure'
+      ) {
+        const [rawStart, rawEnd] = e.detail.highlight
+          .split(',')[0]
+          .split(':')
+          .map(Number);
+        if (Number.isFinite(rawStart) && rawStart >= 1) {
+          this._navigateTo(rawStart, rawEnd || rawStart);
+        }
+      }
+
       if (!this.notooltip) {
         if (e.detail?.eventType === 'click') {
           this._updateTooltip(e);
         } else if (!e.detail?.eventType || e.detail.eventType === 'reset') {
           // Zoom/pan/reset: any open tooltip is now out of place
           this._hideTooltip();
+        }
+      }
+
+      // 1D -> 3D: clicking a feature/variant mirrors its range onto the
+      // structure (nightingale-structure never hears manager highlights)
+      if (e.detail?.eventType === 'click') {
+        const feature = e.detail.feature as
+          | {
+              start?: number | string;
+              begin?: number | string;
+              end?: number | string;
+            }
+          | undefined;
+        const start = Number(feature?.start ?? feature?.begin);
+        const end = Number(feature?.end ?? start);
+        if (Number.isFinite(start) && start >= 1) {
+          this._clickedFeatureHighlight = `${Math.trunc(start)}:${Math.trunc(
+            Number.isFinite(end) ? Math.max(start, end) : start
+          )}`;
+          this.requestUpdate();
         }
       }
     });
@@ -913,8 +961,9 @@ class ProtvistaUniprot extends LitElement {
   }
 
   _hideTooltip() {
-    if (this.tooltip.visible) {
+    if (this.tooltip.visible || this._clickedFeatureHighlight) {
       this.tooltip = { ...this.tooltip, visible: false };
+      this._clickedFeatureHighlight = '';
       this.requestUpdate();
     }
   }
@@ -1200,7 +1249,7 @@ class ProtvistaUniprot extends LitElement {
           ? html`
               <protvista-uniprot-structure
                 accession="${this.accession || ''}"
-                .highlight=${this._structureGroupHighlight}
+                .highlight=${this._combinedStructureHighlight}
               ></protvista-uniprot-structure>
             `
           : ''}
