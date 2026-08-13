@@ -157,7 +157,9 @@ configuration. There are two ways to supply your own:
 The full contract — including the distinction between the **viewer
 configuration** (owned by ProtVista) and **track payloads** (owned by data
 providers/adapters) — is documented in
-[docs/configuration.md](./docs/configuration.md).
+[docs/configuration.md](./docs/configuration.md). The menu colours default
+to the UniProt Franklin palette and can be rethemed via `--protvista-*` CSS
+custom properties (see the Theming section there).
 
 To visualise your own data without writing any code, start from the
 [Starter Kit](./starter-kit/): an HTML page, a sample configuration, and a

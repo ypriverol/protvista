@@ -22,6 +22,71 @@ import externalLinkIcon from './icons/external-link.svg';
 import loaderIcon from './icons/spinner.svg';
 import loaderStyles from './styles/loader-styles';
 
+const PDBE_ENTRY_FILES_URL = 'https://www.ebi.ac.uk/pdbe/entry-files/download/';
+
+/**
+ * NightingaleStructure with resilience against PDBe model-server outages.
+ *
+ * The upstream component loads PDB entries from
+ * www.ebi.ac.uk/pdbe/model-server, which intermittently returns 502/503.
+ * Upstream neither retries nor catches the failure: selectMolecule() is
+ * called un-awaited from its updated() lifecycle, so the rejection is
+ * unhandled ("Invalid data cell" from Mol*) and the viewer is left stuck on
+ * the loading message.
+ *
+ * This subclass retries the load through PDBe's static entry-files service
+ * (a separate deployment serving the same structures) and, if that fails
+ * too, shows the error in the viewer instead of throwing.
+ */
+export class ResilientNightingaleStructure extends NightingaleStructure {
+  async selectMolecule(): Promise<void> {
+    try {
+      await super.selectMolecule();
+      return;
+    } catch (modelServerError) {
+      const structureId = this['structure-id'];
+      const canFallback =
+        structureId &&
+        !structureId.startsWith('AF-') &&
+        !this['custom-download-url'];
+      if (canFallback) {
+        console.warn(
+          `Loading structure ${structureId} from the PDBe model server failed; retrying via static entry files`,
+          modelServerError
+        );
+        this['custom-download-url'] = PDBE_ENTRY_FILES_URL;
+        try {
+          await super.selectMolecule();
+          return;
+        } catch (fallbackError) {
+          console.error(
+            `Fallback load of ${structureId} from PDBe entry files also failed`,
+            fallbackError
+          );
+        } finally {
+          // Restore so later selections try the (usually faster) model
+          // server first again
+          this['custom-download-url'] = undefined;
+        }
+      } else {
+        console.error(
+          `Couldn't load structure ${structureId || this['model-url'] || ''}`,
+          modelServerError
+        );
+      }
+      // showMessage is private in the upstream typings but callable
+      (
+        this as unknown as {
+          showMessage(title: string, content: string): void;
+        }
+      ).showMessage(
+        'Error',
+        `Couldn't load ${structureId || 'the structure'}. The PDBe service may be temporarily unavailable — please try another structure or reload the page.`
+      );
+    }
+  }
+}
+
 const alphaFoldLinkUrl = 'https://alphafold.ebi.ac.uk/search/text/';
 const foldseekUrl = `https://search.foldseek.com/search`;
 const uniprotKBUrl = 'https://www.uniprot.org/uniprotkb/';
@@ -412,7 +477,7 @@ class ProtvistaUniprotStructure extends LitElement {
 
   constructor() {
     super();
-    loadComponent('nightingale-structure', NightingaleStructure);
+    loadComponent('nightingale-structure', ResilientNightingaleStructure);
     // Registered unconditionally (even when no-table is set) so the import is
     // preserved through tree-shaking; the element only renders when noTable is
     // false, so an unused registration is cheap.

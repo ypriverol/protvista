@@ -143,6 +143,26 @@ When `adapter` is omitted the payload is passed to the track element
 unchanged, which is the escape hatch for data already in a Nightingale-native
 format.
 
+## Theming
+
+The menu colours default to the UniProt Franklin palette (as measured from
+the uniprot.org production stylesheet) but are exposed as CSS custom
+properties, so integrators can rebrand without forking any CSS:
+
+```css
+protvista-uniprot {
+  --protvista-category-background: #014371; /* category rows (UniProt sapphire-blue) */
+  --protvista-category-color: #fff; /*         category row text */
+  --protvista-track-background: #e4e8eb; /*    track rows (UniProt platinum) */
+  --protvista-track-color: #1a1a1a; /*         track row text */
+  --protvista-hover-background: #f5f9fc; /*    track row hover */
+  --protvista-link-color: #00639a; /*          links (UniProt sea-blue) */
+}
+```
+
+Override any subset in the embedding page's stylesheet; the rest keep their
+UniProt defaults.
+
 ## Try it
 
 The [Starter Kit](../starter-kit/) is a complete, working example of a custom

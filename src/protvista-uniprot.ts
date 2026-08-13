@@ -953,9 +953,17 @@ class ProtvistaUniprot extends LitElement {
     const toggle = target.getAttribute('data-category-toggle');
 
     if (toggle && !target.classList.contains('open')) {
+      // Flip the arrow synchronously, then defer mounting the expanded
+      // tracks until after the next paint: mounting Nightingale canvas
+      // elements for a dense category blocks the main thread, and without
+      // the deferral the click appears dead until the work finishes.
       target.classList.add('open');
-      this.openCategories = [...this.openCategories, toggle];
-      this.everOpenedCategories.add(toggle);
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          this.everOpenedCategories.add(toggle);
+          this.openCategories = [...this.openCategories, toggle];
+        }, 0);
+      });
     } else {
       target.classList.remove('open');
       this.openCategories = [...this.openCategories].filter(
