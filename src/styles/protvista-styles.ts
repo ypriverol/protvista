@@ -164,6 +164,16 @@ export default css`
     display: inline-block;
   }
 
+  .structure-selection-legend__chip em {
+    font-style: normal;
+    font-size: 0.72rem;
+    color: #667;
+  }
+
+  .structure-selection-legend__chip--offstructure {
+    opacity: 0.55;
+  }
+
   .structure-selection-legend__clear {
     margin-left: auto;
     border: none;

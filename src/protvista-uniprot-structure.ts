@@ -16,6 +16,12 @@ import ProtvistaUniprotDatatable, {
   type ColumnConfig,
 } from './protvista-uniprot-datatable';
 import { fetchAll, loadComponent } from './utils';
+import {
+  parseCoverage,
+  parseHighlightString,
+  clipIntervalsToRange,
+  overlapLength,
+} from './utils/structure-highlight';
 import downloadIcon from './icons/download.svg';
 import externalLinkIcon from './icons/external-link.svg';
 
@@ -488,12 +494,59 @@ class ProtvistaUniprotStructure extends LitElement {
   noTable?: boolean;
   /** Residue ranges ("s:e,s:e") forwarded to the 3D viewer */
   highlight?: string;
+
+  get _selectedCoverage() {
+    const row = this.data?.find((r) => r.id === this.selectedId);
+    return parseCoverage(row?.positions);
+  }
+
+  /**
+   * The highlight clipped to the residues the selected structure actually
+   * covers: APP-class proteins are crystallised as small fragments, and
+   * sending out-of-range positions makes Mol* show a raw mapping error
+   * instead of a structure.
+   */
+  get _clippedHighlight(): string {
+    const intervals = parseHighlightString(this.highlight);
+    if (intervals.length === 0) return '';
+    const coverage = this._selectedCoverage;
+    const visible = coverage
+      ? clipIntervalsToRange(intervals, coverage)
+      : intervals;
+    return visible.map(({ start, end }) => `${start}:${end}`).join(',');
+  }
+
+  /**
+   * When a new highlight has no overlap at all with the selected
+   * structure, switch to the structure covering the most highlighted
+   * residues (typically the full-length AlphaFold model) - what a
+   * biologist expects instead of an empty view.
+   */
+  _autoSelectCoveringStructure() {
+    const intervals = parseHighlightString(this.highlight);
+    if (intervals.length === 0 || !this.data?.length) return;
+    const coverage = this._selectedCoverage;
+    if (coverage && overlapLength(intervals, coverage) > 0) return;
+    let best: { id: string; length: number } | undefined;
+    for (const row of this.data) {
+      const rowCoverage = parseCoverage(row.positions);
+      if (!rowCoverage) continue;
+      const length = overlapLength(intervals, rowCoverage);
+      if (length > 0 && (!best || length > best.length)) {
+        best = { id: row.id, length };
+      }
+    }
+    if (best && best.id !== this.selectedId) {
+      this.selectedId = best.id;
+    }
+  }
   /** Legend entries for what is currently highlighted (label/colour/count) */
   highlightLegend?: {
     key: string;
     label: string;
     color: string;
     count: number;
+    intervals: { start: number; end: number }[];
   }[];
 
   constructor() {
@@ -714,6 +767,7 @@ class ProtvistaUniprotStructure extends LitElement {
   protected override willUpdate(changed: PropertyValues) {
     // Apply when either selection or data changes — covers consumer
     // pre-setting selected-id before the async fetch resolves.
+    if (changed.has('highlight')) this._autoSelectCoveringStructure();
     if (!changed.has('selectedId') && !changed.has('data')) return;
     // Wait for the first data assignment before deciding what to show; a
     // consumer-set selectedId arriving before fetch should not clear anything.
@@ -923,13 +977,13 @@ class ProtvistaUniprotStructure extends LitElement {
                 structure-id=${this.structureId}
                 protein-accession=${this.accession}
                 color-theme=${this.colorTheme}
-                highlight=${this.highlight || ''}
+                highlight=${this._clippedHighlight}
               ></nightingale-structure>`
             : nothing}
           ${this.modelUrl
             ? html`<nightingale-structure
                 model-url=${this.modelUrl}
-                highlight=${this.highlight || ''}
+                highlight=${this._clippedHighlight}
               ></nightingale-structure>`
             : nothing}
         </div>

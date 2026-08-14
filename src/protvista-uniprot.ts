@@ -1786,6 +1786,16 @@ class ProtvistaUniprot extends LitElement {
                           label: this._clickedFeatureLabel,
                           color: '#ffe999',
                           count: 1,
+                          intervals: [
+                            {
+                              start: Number(
+                                this._clickedFeatureHighlight.split(':')[0]
+                              ),
+                              end: Number(
+                                this._clickedFeatureHighlight.split(':')[1]
+                              ),
+                            },
+                          ],
                         },
                       ]
                     : []),
