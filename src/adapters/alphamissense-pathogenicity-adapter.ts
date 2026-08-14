@@ -75,11 +75,7 @@ const parseCSV = (rawText: string): string => {
 
   const out = [];
   for (const position of positions) {
-    // maximum
-    // const value = Math.max(
-    //   ...position.map((variation) => variation.pathogenicityScore)
-    // );
-    // average
+    // Mean pathogenicity across all substitutions at this position
     const value =
       position.reduce(
         (acc, variation) => acc + +variation.pathogenicityScore,
@@ -92,7 +88,6 @@ const parseCSV = (rawText: string): string => {
   return out.join('');
 };
 
-// Load and parse
 const loadAndParseAnnotations = async (
   url: string
 ): Promise<string | undefined> => {
