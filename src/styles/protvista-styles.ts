@@ -239,6 +239,15 @@ export default css`
     border-top: 1px solid var(--protvista-track-background);
   }
 
+  /* The navigation's bold window-bound labels (.start-label/.end-label)
+     render at the bottom edge of its svg, flush against the sequence
+     track's tick numbers below - at certain zooms they overlap. Keep the
+     two text rows apart. */
+  .nav-container nightingale-navigation {
+    display: block;
+    margin-bottom: 9px;
+  }
+
   nightingale-navigation {
     .handle {
       fill: darkgrey;
