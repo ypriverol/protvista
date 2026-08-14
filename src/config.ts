@@ -17,6 +17,7 @@ const proteinsApiServices = {
 
 export type TrackType =
   | 'nightingale-track-canvas'
+  | 'protvista-lollipop-track'
   | 'nightingale-interpro-track'
   | 'nightingale-colored-sequence'
   | 'nightingale-variation-canvas'
@@ -44,6 +45,7 @@ export type ProtvistaTrackConfig = {
       | 'alphamissense-heatmap-adapter'
       | 'proteomics-ptm-adapter'
       | 'rna-editing-adapter'
+      | 'rna-editing-lollipop-adapter'
       | 'rna-editing-graph-adapter';
   }[];
   tooltip: string;
@@ -723,33 +725,21 @@ const config: ProtvistaConfig = {
     {
       name: 'RNA_EDITING',
       label: 'RNA Editing',
-      trackType: 'nightingale-linegraph-track',
+      trackType: 'protvista-lollipop-track',
       helpPage: 'rna_editing',
       tracks: [
         {
-          name: 'rna_editing_graph',
-          label: 'Counts',
-          trackType: 'nightingale-linegraph-track',
+          name: 'rna_editing_sites',
+          label: 'Editing sites',
+          trackType: 'protvista-lollipop-track',
           data: [
             {
-              adapter: 'rna-editing-graph-adapter',
+              adapter: 'rna-editing-lollipop-adapter',
               url: `${proteinsApi}rna-editing/{accession}`,
             },
           ],
           tooltip:
-            'RNA editing events leading to one or more amino acid changes compared to the translation of the non-edited RNA version.',
-        },
-        {
-          name: 'RNA Editing',
-          trackType: 'nightingale-variation-canvas',
-          data: [
-            {
-              adapter: 'rna-editing-adapter',
-              url: `${proteinsApi}rna-editing/{accession}`,
-            },
-          ],
-          tooltip:
-            'RNA editing events leading to one or more amino acid changes compared to the translation of the non-edited RNA version.',
+            'RNA editing events leading to one or more amino acid changes compared to the translation of the non-edited RNA version. Stem height reflects the number of events at each position; colour reflects the dominant consequence.',
         },
       ],
     },

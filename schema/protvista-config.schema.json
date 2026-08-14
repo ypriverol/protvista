@@ -24,6 +24,7 @@
       "description": "The Nightingale visualisation element used to render a track.",
       "enum": [
         "nightingale-track-canvas",
+        "protvista-lollipop-track",
         "nightingale-interpro-track",
         "nightingale-colored-sequence",
         "nightingale-variation-canvas",
@@ -47,6 +48,7 @@
         "alphamissense-heatmap-adapter",
         "proteomics-ptm-adapter",
         "rna-editing-adapter",
+        "rna-editing-lollipop-adapter",
         "rna-editing-graph-adapter"
       ]
     },
