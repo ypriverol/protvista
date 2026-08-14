@@ -1,4 +1,4 @@
-import { LitElement, html, svg } from 'lit';
+import { LitElement, html, svg, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { frame } from 'timing-functions';
@@ -304,6 +304,9 @@ class ProtvistaUniprot extends LitElement {
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
   private gotoError?: string;
+  // Bumped on every reset (accession change): async work captured under an
+  // older generation must not write into the fresh state
+  private _loadGeneration = 0;
   // Deduplicated in-flight/completed fetches for the current accession
   private _urlPromises = new Map<string, Promise<unknown>>();
   // Categories whose data is not fetched until the user expands them
@@ -498,11 +501,18 @@ class ProtvistaUniprot extends LitElement {
   _ensureUrlFetched(url: string, accession: string): Promise<unknown> {
     let promise = this._urlPromises.get(url);
     if (!promise) {
+      const generation = this._loadGeneration;
       this._fetchTotal += 1;
       promise = fetchOne(
         url.replace('{accession}', accession),
-        (loaded, total) => this._onFetchProgress(url, loaded, total)
+        (loaded, total) => {
+          if (generation !== this._loadGeneration) return;
+          this._onFetchProgress(url, loaded, total);
+        }
       ).then((payload) => {
+        // A reset (accession switch) happened while downloading: the
+        // payload belongs to the previous protein
+        if (generation !== this._loadGeneration) return payload;
         this.rawData[url] = payload as TrackPayload;
         this._fetchFractions.set(url, 1);
         this._fetchDone += 1;
@@ -519,6 +529,7 @@ class ProtvistaUniprot extends LitElement {
     category: ProtvistaConfig['categories'][number],
     accession: string
   ) {
+    const generation = this._loadGeneration;
     // Wait only for the urls this category actually uses
     const categoryUrls = [
       ...new Set(category.tracks.flatMap(({ data }) => data[0].url).flat()),
@@ -526,6 +537,7 @@ class ProtvistaUniprot extends LitElement {
     await Promise.all(
       categoryUrls.map((url) => this._ensureUrlFetched(url, accession))
     );
+    if (generation !== this._loadGeneration) return;
     await this._transformCategoryTracks(category);
   }
 
@@ -623,6 +635,7 @@ class ProtvistaUniprot extends LitElement {
     category: ProtvistaConfig['categories'][number],
     accession: string
   ) {
+    const generation = this._loadGeneration;
     const chunkSize = category.regionChunkSize as number;
     const length = this.sequence?.length ?? 0;
     const chunks = buildRegionChunks(length, chunkSize);
@@ -640,6 +653,7 @@ class ProtvistaUniprot extends LitElement {
     const refresh = () => {
       // Serialise transforms; each one reads the current merged rawData
       transforming = transforming.then(() => {
+        if (generation !== this._loadGeneration) return;
         for (const url of urls) {
           const merged = mergeChunkPayloads(
             slotsByUrl.get(url) as (Record<string, unknown> | null)[]
@@ -675,6 +689,7 @@ class ProtvistaUniprot extends LitElement {
       )
     );
     await refresh();
+    if (generation !== this._loadGeneration) return;
     // Release the chunk payloads; the transformed data is what the tracks
     // hold on to
     for (const url of urls) {
@@ -694,9 +709,11 @@ class ProtvistaUniprot extends LitElement {
     const category = this.config?.categories.find((c) => c.name === name);
     if (!accession || !category) return;
     if (!this._deferredCategories.delete(name)) return; // already loading
+    const generation = this._loadGeneration;
     this._deferredLoading.add(name);
     this.requestUpdate();
     await this._processCategory(category, accession);
+    if (generation !== this._loadGeneration) return;
     this._deferredLoading.delete(name);
     // Release this category's raw payloads (e.g. 85MB of TITIN variants)
     for (const url of new Set(
@@ -708,6 +725,7 @@ class ProtvistaUniprot extends LitElement {
   }
 
   async _loadData() {
+    const generation = this._loadGeneration;
     const accession = this.accession;
     if (accession && this.config) {
       // Partition: categories marked lazyThreshold defer their (heavy)
@@ -755,8 +773,10 @@ class ProtvistaUniprot extends LitElement {
       // Every eager category has been transformed into this.data; release
       // the raw payloads instead of pinning them in memory. Deferred
       // fetches have not started yet, so nothing of theirs is lost.
+      if (generation !== this._loadGeneration) return;
       this.rawData = {};
     }
+    if (generation !== this._loadGeneration) return;
     this.loading = false;
     markOnce('protvista:data-loaded');
     measureOnce(
@@ -1070,6 +1090,7 @@ class ProtvistaUniprot extends LitElement {
     this._fetchFractions.clear();
     this._fetchDone = 0;
     this._fetchTotal = 0;
+    this._loadGeneration += 1;
     this._urlPromises.clear();
     this._deferredCategories.clear();
     this._deferredLoading.clear();
@@ -1433,181 +1454,185 @@ class ProtvistaUniprot extends LitElement {
             ></nightingale-sequence>
           </div>
         </div>
-        ${this.config.categories.map(
-          (category) =>
-            (this.data[category.name] ||
-              this._deferredCategories.has(category.name) ||
-              this._deferredLoading.has(category.name)) &&
-            html`
-              <div
-                class="category"
-                id="category_${category.name}"
-                .style="${this._deferredCategories.has(category.name) ||
-                this._deferredLoading.has(category.name)
-                  ? 'display:flex'
-                  : ''}"
-              >
+        ${this.config.categories.map((category) =>
+          this.data[category.name] ||
+          this._deferredCategories.has(category.name) ||
+          this._deferredLoading.has(category.name)
+            ? html`
                 <div
-                  class="category-label"
-                  data-category-toggle="${category.name}"
-                  @click="${this.handleCategoryClick}"
-                >
-                  ${category.helpPage
-                    ? html`<span data-article-id="${category.helpPage}"
-                        >${category.label}</span
-                      >`
-                    : category.label}
-                </div>
-                <div
-                  data-id="category_${category.name}"
-                  class="aggregate-track-content track-content ${category.trackType ===
-                  'nightingale-colored-sequence'
-                    ? 'track-content__coloured-sequence'
+                  class="category"
+                  id="category_${category.name}"
+                  .style="${this._deferredCategories.has(category.name) ||
+                  this._deferredLoading.has(category.name)
+                    ? 'display:flex'
                     : ''}"
-                  .style="${this.openCategories.includes(category.name)
-                    ? 'opacity:0'
-                    : 'opacity:1'}"
                 >
-                  ${this._deferredCategories.has(category.name)
-                    ? html`<span class="category-deferred-note"
-                        >Large dataset — click the label to load</span
-                      >`
-                    : this._deferredLoading.has(category.name)
-                      ? html`<span class="category-deferred-note"
-                          >Loading…</span
+                  <div
+                    class="category-label"
+                    data-category-toggle="${category.name}"
+                    @click="${this.handleCategoryClick}"
+                  >
+                    ${category.helpPage
+                      ? html`<span data-article-id="${category.helpPage}"
+                          >${category.label}</span
                         >`
-                      : ''}
-                  ${this.data[category.name] &&
-                  this.getTrack(
-                    category.trackType,
-                    'non-overlapping',
-                    category.color,
-                    category.shape,
-                    category.name,
-                    category.scale,
-                    category['color-range']
-                  )}
+                      : category.label}
+                  </div>
+                  <div
+                    data-id="category_${category.name}"
+                    class="aggregate-track-content track-content ${category.trackType ===
+                    'nightingale-colored-sequence'
+                      ? 'track-content__coloured-sequence'
+                      : ''}"
+                    .style="${this.openCategories.includes(category.name)
+                      ? 'opacity:0'
+                      : 'opacity:1'}"
+                  >
+                    ${this._deferredCategories.has(category.name)
+                      ? html`<span class="category-deferred-note"
+                          >Large dataset — click the label to load</span
+                        >`
+                      : this._deferredLoading.has(category.name)
+                        ? html`<span class="category-deferred-note"
+                            >Loading…</span
+                          >`
+                        : ''}
+                    ${this.data[category.name] &&
+                    this.getTrack(
+                      category.trackType,
+                      'non-overlapping',
+                      category.color,
+                      category.shape,
+                      category.name,
+                      category.scale,
+                      category['color-range']
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              <!-- Expanded Categories -->
-              ${category.tracks &&
-              category.tracks.map((track) => {
-                const isOpen = this.openCategories.includes(category.name);
-                // Once a category has been expanded, keep its track elements
-                // mounted and merely hide them on collapse: re-mounting means
-                // Nightingale re-processes all the data from scratch, which
-                // is seconds of work for dense tracks (e.g. TITIN variants).
-                if (isOpen || this.everOpenedCategories.has(category.name)) {
-                  const trackData = this.data[`${category.name}-${track.name}`];
-                  return trackData &&
-                    ((Array.isArray(trackData) && trackData.length) ||
-                      Object.keys(trackData).length)
-                    ? html`
-                        <div
-                          class="category__track"
-                          id="track_${track.name}"
-                          .style="${isOpen ? '' : 'display:none'}"
-                        >
-                          <div class="track-label" title="${track.tooltip}">
-                            ${(track.filterComponent &&
-                              this.getFilterComponent(
-                                `${category.name}-${track.name}`
-                              )) ||
-                            (track.labelUrl &&
-                              this.accession &&
-                              html`<a
-                                target="_blank"
-                                href="${track.labelUrl.replace(
-                                  '{accession}',
-                                  this.accession
-                                )}"
-                                >${track.label}</a
-                              >`) ||
-                            (track.helpPage
-                              ? html`<span data-article-id="${track.helpPage}"
-                                  >${track.label}</span
-                                >`
-                              : track.label)}
-                            ${!this.nostructure
-                              ? html`<label
-                                  class="structure-toggle"
-                                  title="Highlight all features of this track on the 3D structure (and across all tracks)"
-                                  ><input
-                                    type="checkbox"
-                                    data-track-key="${category.name}-${track.name}"
-                                    .checked=${this.structureHighlightTracks.has(
-                                      `${category.name}-${track.name}`
-                                    )}
-                                    @change="${this._handleStructureToggle}"
-                                  />3D</label
-                                >`
-                              : ''}
-                          </div>
-                          <div
-                            class="track-content"
-                            class="track-content ${category.trackType ===
-                            'nightingale-colored-sequence'
-                              ? 'track-content__coloured-sequence'
-                              : ''}"
-                            data-id="track_${track.name}"
-                          >
-                            ${this.getTrack(
-                              track.trackType,
-                              'non-overlapping',
-                              track.color || category.color,
-                              track.shape || category.shape,
-                              `${category.name}-${track.name}`,
-                              track.scale || category.scale,
-                              track['color-range'] || category['color-range']
-                            )}
-                          </div>
-                        </div>
-                      `
-                    : '';
-                }
-              })}
-              ${!category.tracks
-                ? (this.data[category.name] as { accession?: string }[]).map(
-                    (item: { accession?: string }) => {
-                      const isOpen = this.openCategories.includes(
-                        category.name
-                      );
-                      if (
-                        isOpen ||
-                        this.everOpenedCategories.has(category.name)
-                      ) {
-                        if (!item || !item.accession) return '';
-                        return html`
+                <!-- Expanded Categories -->
+                ${category.tracks &&
+                category.tracks.map((track) => {
+                  const isOpen = this.openCategories.includes(category.name);
+                  // Once a category has been expanded, keep its track elements
+                  // mounted and merely hide them on collapse: re-mounting means
+                  // Nightingale re-processes all the data from scratch, which
+                  // is seconds of work for dense tracks (e.g. TITIN variants).
+                  if (isOpen || this.everOpenedCategories.has(category.name)) {
+                    const trackData =
+                      this.data[`${category.name}-${track.name}`];
+                    return trackData &&
+                      ((Array.isArray(trackData) && trackData.length) ||
+                        Object.keys(trackData).length)
+                      ? html`
                           <div
                             class="category__track"
-                            id="track_${item.accession}"
+                            id="track_${track.name}"
                             .style="${isOpen ? '' : 'display:none'}"
                           >
-                            <div class="track-label" title="${item.accession}">
-                              ${item.accession}
+                            <div class="track-label" title="${track.tooltip}">
+                              ${(track.filterComponent &&
+                                this.getFilterComponent(
+                                  `${category.name}-${track.name}`
+                                )) ||
+                              (track.labelUrl &&
+                                this.accession &&
+                                html`<a
+                                  target="_blank"
+                                  href="${track.labelUrl.replace(
+                                    '{accession}',
+                                    this.accession
+                                  )}"
+                                  >${track.label}</a
+                                >`) ||
+                              (track.helpPage
+                                ? html`<span data-article-id="${track.helpPage}"
+                                    >${track.label}</span
+                                  >`
+                                : track.label)}
+                              ${!this.nostructure
+                                ? html`<label
+                                    class="structure-toggle"
+                                    title="Highlight all features of this track on the 3D structure (and across all tracks)"
+                                    ><input
+                                      type="checkbox"
+                                      data-track-key="${category.name}-${track.name}"
+                                      .checked=${this.structureHighlightTracks.has(
+                                        `${category.name}-${track.name}`
+                                      )}
+                                      @change="${this._handleStructureToggle}"
+                                    />3D</label
+                                  >`
+                                : ''}
                             </div>
                             <div
                               class="track-content"
-                              data-id="track_${item.accession}"
+                              class="track-content ${category.trackType ===
+                              'nightingale-colored-sequence'
+                                ? 'track-content__coloured-sequence'
+                                : ''}"
+                              data-id="track_${track.name}"
                             >
                               ${this.getTrack(
-                                category.trackType,
+                                track.trackType,
                                 'non-overlapping',
-                                category.color,
-                                category.shape,
-                                `${category.name}-${item.accession}`,
-                                category.scale,
-                                category['color-range']
+                                track.color || category.color,
+                                track.shape || category.shape,
+                                `${category.name}-${track.name}`,
+                                track.scale || category.scale,
+                                track['color-range'] || category['color-range']
                               )}
                             </div>
                           </div>
-                        `;
+                        `
+                      : '';
+                  }
+                })}
+                ${!category.tracks
+                  ? (this.data[category.name] as { accession?: string }[]).map(
+                      (item: { accession?: string }) => {
+                        const isOpen = this.openCategories.includes(
+                          category.name
+                        );
+                        if (
+                          isOpen ||
+                          this.everOpenedCategories.has(category.name)
+                        ) {
+                          if (!item || !item.accession) return '';
+                          return html`
+                            <div
+                              class="category__track"
+                              id="track_${item.accession}"
+                              .style="${isOpen ? '' : 'display:none'}"
+                            >
+                              <div
+                                class="track-label"
+                                title="${item.accession}"
+                              >
+                                ${item.accession}
+                              </div>
+                              <div
+                                class="track-content"
+                                data-id="track_${item.accession}"
+                              >
+                                ${this.getTrack(
+                                  category.trackType,
+                                  'non-overlapping',
+                                  category.color,
+                                  category.shape,
+                                  `${category.name}-${item.accession}`,
+                                  category.scale,
+                                  category['color-range']
+                                )}
+                              </div>
+                            </div>
+                          `;
+                        }
                       }
-                    }
-                  )
-                : ''}
-            `
+                    )
+                  : ''}
+              `
+            : nothing
         )}
         <div class="nav-container">
           <div class="credits"></div>
