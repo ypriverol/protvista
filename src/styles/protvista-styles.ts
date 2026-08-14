@@ -261,21 +261,14 @@ export default css`
     font-size: 0.8rem;
   }
 
-  /* Line-graph hover readouts: one label per series, positioned on each
-     line at the cursor. When the series run close together (dense
-     variant regions) the labels land on top of each other. Halo them for
-     legibility and push the second series' label down a line. Both
-     built-in graphs (variant counts, peptide coverage) have exactly two
-     series; a third would need another offset step. */
+  /* Line-graph hover readouts: halo for legibility over the tracks.
+     Collision separation is done in withHoverLabelCollisionFix (a static
+     CSS offset pushes the label outside the 40px svg and clips it). */
   nightingale-linegraph-track .mouse-per-line text {
     paint-order: stroke;
     stroke: #fff;
     stroke-width: 3px;
     font-size: 11px;
-  }
-
-  nightingale-linegraph-track .mouse-per-line + .mouse-per-line text {
-    transform: translateY(13px);
   }
 
   .feature {

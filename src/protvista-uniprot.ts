@@ -204,40 +204,6 @@ type RefreshablePatchTarget = HTMLElement & {
   width?: number;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const withHighlightOnlyRefresh = <T extends new (...args: any[]) => any>(
-  Base: T
-): T =>
-  class extends Base {
-    private __lastGeometryStamp?: string;
-    private __lastDataRef?: unknown;
-
-    zoomRefreshed() {
-      const self = this as unknown as RefreshablePatchTarget;
-      const stamp = [
-        self.width,
-        self['display-start'],
-        self['display-end'],
-        self.length,
-        self.sequence?.length,
-        self.offsetWidth,
-      ].join('|');
-      if (
-        this.__lastGeometryStamp === stamp &&
-        this.__lastDataRef === self.data
-      ) {
-        // Only the highlight (or an equally non-geometric attribute)
-        // changed: redraw the overlay, skip the O(sequence-length) rebuild
-        self.updateHighlight?.();
-        return;
-      }
-      this.__lastGeometryStamp = stamp;
-      this.__lastDataRef = self.data;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (super.zoomRefreshed as any)?.call(this);
-    }
-  };
-
 /**
  * nightingale-variation-canvas's zoomRefreshed() unconditionally calls
  * onDimensionsChange(), which schedules another zoomRefreshed() - a
@@ -260,6 +226,102 @@ const withStableDimensions = <T extends new (...args: any[]) => any>(
       (super.onDimensionsChange as any)?.call(this);
     }
   };
+
+/**
+ * The line graphs draw one hover readout per series at the cursor; when
+ * the series run close together the labels overlap, and any fixed CSS
+ * offset clips the second label outside the 40px svg. Nudge the second
+ * label only when the two actually collide, keeping it inside the svg
+ * (below the first label when there is room, above otherwise).
+ */
+const separateHoverLabels = (host: HTMLElement) => {
+  const texts = Array.from(
+    host.querySelectorAll<SVGTextElement>('.mouse-per-line text')
+  );
+  if (texts.length === 0) return;
+  for (const text of texts) text.removeAttribute('transform');
+  const svg = host.querySelector('svg');
+  if (!svg) return;
+  const svgRect = svg.getBoundingClientRect();
+
+  // Clamp every label inside the svg vertically: a zero-valued series
+  // rides the baseline and upstream lets its descenders overflow the
+  // bottom edge
+  const clampY = (rect: DOMRect) => {
+    if (rect.bottom > svgRect.bottom - 1)
+      return svgRect.bottom - 1 - rect.bottom;
+    if (rect.top < svgRect.top + 1) return svgRect.top + 1 - rect.top;
+    return 0;
+  };
+  const rects = texts.map((t) => t.getBoundingClientRect());
+  const dys = rects.map(clampY);
+
+  let dx = 0;
+  if (texts.length >= 2) {
+    const first = rects[0];
+    const second = rects[1];
+    const secondTop = second.top + dys[1];
+    const secondBottom = second.bottom + dys[1];
+    const firstTop = first.top + dys[0];
+    const firstBottom = first.bottom + dys[0];
+    const verticalOverlap = secondTop < firstBottom && secondBottom > firstTop;
+    const horizontalOverlap =
+      second.left < first.right && second.right > first.left;
+    if (verticalOverlap && horizontalOverlap) {
+      // The 40px graph rarely has vertical room for two stacked labels;
+      // flip the second one to the left of the cursor instead
+      const flip = -(second.width + 24);
+      if (second.left + flip >= svgRect.left + 1) dx = flip;
+    }
+  }
+
+  texts.forEach((text, i) => {
+    const shiftX = i === 1 ? dx : 0;
+    if (shiftX || dys[i]) {
+      text.setAttribute(
+        'transform',
+        `translate(${Math.round(shiftX)}, ${Math.round(dys[i])})`
+      );
+    }
+  });
+};
+
+/**
+ * IMPORTANT registration caveat: nightingale-linegraph-track and
+ * nightingale-colored-sequence self-register their tag names at module
+ * import time, so passing a subclass to loadComponent() is a silent no-op
+ * for them (customElements.get() already finds the tag). Their fixes must
+ * therefore be installed on the UPSTREAM PROTOTYPES, which affects live
+ * instances regardless of who registered the tag. The variation-canvas
+ * and structure elements do NOT self-register, so their subclasses work.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const installHighlightOnlyRefresh = (ctor: { prototype: any }) => {
+  const proto = ctor.prototype;
+  if (proto.__protvistaHighlightOnlyRefresh) return;
+  proto.__protvistaHighlightOnlyRefresh = true;
+  const original = proto.zoomRefreshed;
+  const stamps = new WeakMap<object, { stamp: string; data: unknown }>();
+  proto.zoomRefreshed = function (this: RefreshablePatchTarget) {
+    const stamp = [
+      this.width,
+      this['display-start'],
+      this['display-end'],
+      this.length,
+      this.sequence?.length,
+      this.offsetWidth,
+    ].join('|');
+    const previous = stamps.get(this);
+    if (previous && previous.stamp === stamp && previous.data === this.data) {
+      // Only the highlight (or an equally non-geometric attribute)
+      // changed: redraw the overlay, skip the O(sequence-length) rebuild
+      this.updateHighlight?.();
+      return;
+    }
+    stamps.set(this, { stamp, data: this.data });
+    original?.call(this);
+  };
+};
 
 type NightingaleEvent = Event & {
   detail?: {
@@ -299,6 +361,7 @@ class ProtvistaUniprot extends LitElement {
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
   private gotoError?: string;
+  private _labelFixRaf = 0;
   // Download progress across all configured endpoints: per-url fraction
   // (0..1), aggregated into the slim bar above the viewer
   private _fetchFractions = new Map<string, number>();
@@ -386,20 +449,25 @@ class ProtvistaUniprot extends LitElement {
   registerWebComponents() {
     loadComponent('nightingale-navigation', NightingaleNavigation);
     loadComponent('nightingale-track-canvas', NightingaleTrackCanvas);
-    loadComponent(
-      'nightingale-colored-sequence',
-      withHighlightOnlyRefresh(NightingaleColoredSequence)
+    // Self-registering elements can exist as a DIFFERENT bundled copy
+    // than our import (duplicate module instances); always patch the
+    // class that actually owns the registered tag.
+    installHighlightOnlyRefresh(
+      customElements.get('nightingale-colored-sequence') ??
+        NightingaleColoredSequence
     );
+    loadComponent('nightingale-colored-sequence', NightingaleColoredSequence);
     loadComponent('nightingale-interpro-track', NightingaleInterproTrack);
     loadComponent('nightingale-sequence', NightingaleSequence);
     loadComponent(
       'nightingale-variation-canvas',
       withStableDimensions(NightingaleVariationCanvas)
     );
-    loadComponent(
-      'nightingale-linegraph-track',
-      withHighlightOnlyRefresh(NightingaleLinegraphTrack)
+    installHighlightOnlyRefresh(
+      customElements.get('nightingale-linegraph-track') ??
+        NightingaleLinegraphTrack
     );
+    loadComponent('nightingale-linegraph-track', NightingaleLinegraphTrack);
     loadComponent('nightingale-filter', NightingaleFilter);
     loadComponent('nightingale-manager', NightingaleManager);
     loadComponent('protvista-uniprot-structure', ProtvistaUniprotStructure);
@@ -1109,6 +1177,22 @@ class ProtvistaUniprot extends LitElement {
     });
 
     document.addEventListener('click', this._onOutsideClick);
+
+    // Line-graph hover readouts overlap when the series run close
+    // together; the elements' own lifecycle cannot be patched (custom
+    // element callbacks are captured at define() time), so delegate from
+    // the wrapper: after the upstream mousemove handler positions the
+    // labels, separate them if they collide.
+    this.addEventListener('mousemove', (e) => {
+      const track = (e.target as Element)?.closest?.(
+        'nightingale-linegraph-track'
+      );
+      if (!track) return;
+      cancelAnimationFrame(this._labelFixRaf);
+      this._labelFixRaf = requestAnimationFrame(() =>
+        separateHoverLabels(track as HTMLElement)
+      );
+    });
   }
 
   disconnectedCallback() {
