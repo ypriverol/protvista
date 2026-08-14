@@ -99,6 +99,7 @@ const CATEGORY_KEYS = [
   'scale',
   'color-range',
   'helpPage',
+  'lazyThreshold',
 ] as const;
 const CATEGORY_OPTIONAL_STRINGS = [
   'color',
@@ -231,6 +232,16 @@ function validateCategory(
   }
   checkUnknownKeys(category, CATEGORY_KEYS, path, errors);
   checkOptionalStrings(category, CATEGORY_OPTIONAL_STRINGS, path, errors);
+  if (
+    category.lazyThreshold !== undefined &&
+    (!Number.isInteger(category.lazyThreshold) ||
+      (category.lazyThreshold as number) < 1)
+  ) {
+    errors.push({
+      path: `${path}/lazyThreshold`,
+      message: 'lazyThreshold must be a positive integer when present',
+    });
+  }
   if (!isNonEmptyString(category.name)) {
     errors.push({
       path: `${path}/name`,

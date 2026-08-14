@@ -110,6 +110,11 @@ Key points:
   different feature type.
 - Rendering options (`color`, `shape`, `scale`, `color-range`) can be set on
   a category (default for its tracks) or per track (override).
+- **`lazyThreshold`** (category-level): defer fetching the category's data
+  until the user expands it when the protein is longer than this many
+  residues. The built-in configuration uses it for variants
+  (`lazyThreshold: 3000`), so TITIN-class proteins don't download ~85MB of
+  variation data unless the category is opened.
 
 ### Supported track types
 

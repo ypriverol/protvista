@@ -171,6 +171,11 @@
         "helpPage": {
           "type": "string",
           "description": "Slug of the UniProt help page linked from the category label."
+        },
+        "lazyThreshold": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Defer fetching this category's data until the user expands it when the protein is longer than this many residues (for heavy payloads such as variants on very large proteins)."
         }
       }
     }

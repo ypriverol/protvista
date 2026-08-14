@@ -62,6 +62,12 @@ type ProtvistaCategory = {
   label: string;
   trackType: TrackType;
   tracks: ProtvistaTrackConfig[];
+  /**
+   * Defer fetching this category's data until the user expands it when the
+   * protein is longer than this many residues (heavy payloads, e.g.
+   * variants for TITIN-class proteins).
+   */
+  lazyThreshold?: number;
   color?: string;
   shape?: string; //TODO: eventually replace with list
   scale?: string;
@@ -691,6 +697,7 @@ const config: ProtvistaConfig = {
     {
       name: 'VARIATION',
       label: 'Variants',
+      lazyThreshold: 3000,
       trackType: 'nightingale-linegraph-track',
       helpPage: 'variant_viewer',
       tracks: [
