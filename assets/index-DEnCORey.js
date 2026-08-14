@@ -6705,6 +6705,13 @@ void main() {
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
     padding: 0.6rem 0.8rem 0.7rem;
     font-size: 0.85rem;
+    /* an ancestor inside the manager zeroes line-height to remove
+       inter-track gaps; restore normal text flow for the panel */
+    line-height: 1.4;
+  }
+
+  .protvista-dossier li {
+    margin: 0.15rem 0;
   }
 
   .protvista-dossier__header {
@@ -7190,7 +7197,11 @@ void main() {
               </div>
             `:``}
         ${this._dossierLoading||this._dossier?fe`
-              <div class="protvista-dossier" role="dialog" aria-label="Residue report">
+              <div
+                class="protvista-dossier"
+                role="dialog"
+                aria-label="Residue report"
+              >
                 <div class="protvista-dossier__header">
                   <strong>
                     ${this._dossier?fe`Residue
@@ -7230,19 +7241,20 @@ void main() {
                             </h5>
                             <ul>
                               ${this._dossier.neighbours.map(e=>fe`<li
-                                  class="protvista-dossier__row"
-                                  title="Click to highlight both residues; confidence: ${e.confidence}"
-                                  @click="${()=>this._highlightDossierPair(e.targetResidue)}"
-                                >
-                                  <b>${e.distance} Å</b> ${e.feature.type}
-                                  ${e.feature.description?fe`· ${e.feature.description}`:``}
-                                  <span class="protvista-dossier__muted"
-                                    >at ${e.targetResidue}</span
+                                    class="protvista-dossier__row"
+                                    title="Click to highlight both residues; confidence: ${e.confidence}"
+                                    @click="${()=>this._highlightDossierPair(e.targetResidue)}"
                                   >
-                                  ${e.spatialOnly?fe`<em class="protvista-dossier__badge"
-                                        >distal in sequence</em
-                                      >`:``}
-                                </li>`)}
+                                    <b>${e.distance} Å</b> ${e.feature.type}
+                                    ${e.feature.description?fe`· ${e.feature.description}`:``}
+                                    <span class="protvista-dossier__muted"
+                                      >at ${e.targetResidue}</span
+                                    >
+                                    ${e.spatialOnly?fe`<em
+                                          class="protvista-dossier__badge"
+                                          >distal in sequence</em
+                                        >`:``}
+                                  </li>`)}
                             </ul>`:this._dossier?.spatialUnavailable?fe`<p class="protvista-dossier__muted">
                               Spatial context unavailable — no full-length
                               AlphaFold model for this protein.
