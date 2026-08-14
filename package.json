@@ -23,7 +23,8 @@
     "bench:lighthouse": "yarn build:demo && lhci autorun --config=bench/lighthouserc.cjs",
     "bench:summary": "node bench/summarize.mjs",
     "clear-cdn-cache": "./scripts/clearCDNcaches.sh",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:e2e": "node e2e/smoke.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
@@ -81,6 +82,7 @@
     "jsdom": "29.1.0",
     "lint-staged": "15.5.2",
     "npm-run-all": "4.1.5",
+    "playwright": "1.62.1",
     "prettier": "3.8.3",
     "rollup-plugin-visualizer": "7.0.1",
     "svg-inline-loader": "0.8.2",

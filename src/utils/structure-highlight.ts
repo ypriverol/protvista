@@ -63,9 +63,25 @@ export const buildHighlight = (
   trackDataList: unknown[],
   cap: number = MAX_HIGHLIGHT_INTERVALS
 ): { highlight: string; truncated: boolean } => {
-  const merged = mergeIntervals(trackDataList.flatMap(collectIntervals));
-  const truncated = merged.length > cap;
-  const kept = truncated ? merged.slice(0, cap) : merged;
+  // Bound the synchronous work up front: a 240k-variant track would
+  // otherwise be fully collected and sorted just to keep 500 intervals.
+  const inputCap = cap * 40;
+  let collected: Interval[] = [];
+  let inputTruncated = false;
+  for (const trackData of trackDataList) {
+    const intervals = collectIntervals(trackData);
+    if (collected.length + intervals.length > inputCap) {
+      collected = collected.concat(
+        intervals.slice(0, inputCap - collected.length)
+      );
+      inputTruncated = true;
+      break;
+    }
+    collected = collected.concat(intervals);
+  }
+  const merged = mergeIntervals(collected);
+  const truncated = inputTruncated || merged.length > cap;
+  const kept = merged.length > cap ? merged.slice(0, cap) : merged;
   return {
     highlight: kept.map(({ start, end }) => `${start}:${end}`).join(','),
     truncated,

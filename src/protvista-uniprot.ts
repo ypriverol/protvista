@@ -174,6 +174,87 @@ async function callAdapter(
   }
 }
 
+/**
+ * Wrapper-side performance patches for upstream Nightingale elements
+ * (see the "highlight hot path" audit in PR discussion):
+ *
+ * withZoom.attributeChangedCallback treats ANY changed attribute - the
+ * highlight included - as a zoom and calls zoomRefreshed(), which in the
+ * SVG-based elements rebuilds everything: nightingale-colored-sequence
+ * rewrites one <stop> per residue (34,350 x 2 attrs x 4 tracks on TITIN
+ * per click) and nightingale-linegraph-track regenerates full multi-
+ * megabyte path strings. Skip the rebuild when nothing that affects
+ * geometry changed and refresh only the highlight overlay.
+ */
+type RefreshablePatchTarget = HTMLElement & {
+  zoomRefreshed?(): void;
+  updateHighlight?(): void;
+  onDimensionsChange?(): void;
+  data?: unknown;
+  sequence?: string;
+  length?: number;
+  'display-start'?: number;
+  'display-end'?: number;
+  width?: number;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const withHighlightOnlyRefresh = <T extends new (...args: any[]) => any>(
+  Base: T
+): T =>
+  class extends Base {
+    private __lastGeometryStamp?: string;
+    private __lastDataRef?: unknown;
+
+    zoomRefreshed() {
+      const self = this as unknown as RefreshablePatchTarget;
+      const stamp = [
+        self.width,
+        self['display-start'],
+        self['display-end'],
+        self.length,
+        self.sequence?.length,
+        self.offsetWidth,
+      ].join('|');
+      if (
+        this.__lastGeometryStamp === stamp &&
+        this.__lastDataRef === self.data
+      ) {
+        // Only the highlight (or an equally non-geometric attribute)
+        // changed: redraw the overlay, skip the O(sequence-length) rebuild
+        self.updateHighlight?.();
+        return;
+      }
+      this.__lastGeometryStamp = stamp;
+      this.__lastDataRef = self.data;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (super.zoomRefreshed as any)?.call(this);
+    }
+  };
+
+/**
+ * nightingale-variation-canvas's zoomRefreshed() unconditionally calls
+ * onDimensionsChange(), which schedules another zoomRefreshed() - a
+ * self-perpetuating requestAnimationFrame loop that burns CPU forever
+ * once variant data is loaded. Break the cycle by only propagating real
+ * height changes.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const withStableDimensions = <T extends new (...args: any[]) => any>(
+  Base: T
+): T =>
+  class extends Base {
+    private __lastMeasuredHeight?: number;
+
+    onDimensionsChange() {
+      const height = (this as unknown as HTMLElement).offsetHeight;
+      if (this.__lastMeasuredHeight === height) return;
+      this.__lastMeasuredHeight = height;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (super.onDimensionsChange as any)?.call(this);
+    }
+  };
+
 type NightingaleEvent = Event & {
   detail?: {
     displaystart?: number;
@@ -181,6 +262,7 @@ type NightingaleEvent = Event & {
     eventType?: 'click' | 'mouseover' | 'mouseout' | 'reset';
     feature?: unknown;
     coords?: [number, number];
+    highlight?: string;
   };
 };
 
@@ -211,10 +293,24 @@ class ProtvistaUniprot extends LitElement {
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
   private gotoError?: string;
+  // Download progress across all configured endpoints: per-url fraction
+  // (0..1), aggregated into the slim bar above the viewer
+  private _fetchFractions = new Map<string, number>();
+  private _fetchDone = 0;
+  private _fetchTotal = 0;
+  private _lastProgressRender = 0;
   // Track keys ("CATEGORY-track") whose features are currently highlighted
   // on the 3D structure (and across all tracks) as a group
   private structureHighlightTracks = new Set<string>();
   private _structureGroupHighlight = '';
+  // Range of the last clicked 1D feature, mirrored onto the 3D structure
+  private _clickedFeatureHighlight = '';
+
+  get _combinedStructureHighlight(): string {
+    return [this._structureGroupHighlight, this._clickedFeatureHighlight]
+      .filter(Boolean)
+      .join(',');
+  }
   private _genomicCoordinates?: Promise<GnCoordinate[] | undefined>;
   // Data waiting to be pushed into a track element once it scrolls into
   // view. Feeding a dense track is expensive (full re-process + draw), so
@@ -229,6 +325,13 @@ class ProtvistaUniprot extends LitElement {
   // Category opens deferred to the next frame that haven't fired yet; a
   // close click in between removes the entry to cancel the expansion.
   private _pendingCategoryOpens = new Set<string>();
+  // Last RAW data reference pushed into each track element. Comparing
+  // against element.data is useless: nightingale's setter stores a
+  // processed copy and the getter returns that - never the object we
+  // assigned - so an identity guard on element.data is always true and
+  // every lit update re-fed every track (2.1s NonOverlappingLayout re-run
+  // per click on TITIN, measured by CPU profile).
+  private _assignedTrackData = new WeakMap<Element, unknown>();
   // Tracks the exact data reference last pushed into each heatmap so
   // _loadDataInComponents (which runs after every lit update) doesn't
   // rebuild heatmaps that already display the current data.
@@ -277,11 +380,20 @@ class ProtvistaUniprot extends LitElement {
   registerWebComponents() {
     loadComponent('nightingale-navigation', NightingaleNavigation);
     loadComponent('nightingale-track-canvas', NightingaleTrackCanvas);
-    loadComponent('nightingale-colored-sequence', NightingaleColoredSequence);
+    loadComponent(
+      'nightingale-colored-sequence',
+      withHighlightOnlyRefresh(NightingaleColoredSequence)
+    );
     loadComponent('nightingale-interpro-track', NightingaleInterproTrack);
     loadComponent('nightingale-sequence', NightingaleSequence);
-    loadComponent('nightingale-variation-canvas', NightingaleVariationCanvas);
-    loadComponent('nightingale-linegraph-track', NightingaleLinegraphTrack);
+    loadComponent(
+      'nightingale-variation-canvas',
+      withStableDimensions(NightingaleVariationCanvas)
+    );
+    loadComponent(
+      'nightingale-linegraph-track',
+      withHighlightOnlyRefresh(NightingaleLinegraphTrack)
+    );
     loadComponent('nightingale-filter', NightingaleFilter);
     loadComponent('nightingale-manager', NightingaleManager);
     loadComponent('protvista-uniprot-structure', ProtvistaUniprotStructure);
@@ -294,6 +406,32 @@ class ProtvistaUniprot extends LitElement {
    * payloads arrive so that one slow endpoint (e.g. 85MB of variants for
    * TITIN) never blanks the whole viewer.
    */
+  _onFetchProgress(url: string, loadedBytes: number, totalBytes?: number) {
+    // content-length is the compressed size while loadedBytes counts
+    // decompressed bytes; cap below 1 so only completion reaches 100%
+    const fraction = totalBytes
+      ? Math.min(loadedBytes / totalBytes, 0.95)
+      : 0.5;
+    this._fetchFractions.set(url, fraction);
+    this._renderProgress();
+  }
+
+  _renderProgress(force = false) {
+    const now = Date.now();
+    if (!force && now - this._lastProgressRender < 150) return;
+    this._lastProgressRender = now;
+    this.requestUpdate();
+  }
+
+  get _fetchProgressPercent(): number {
+    if (this._fetchTotal === 0) return 100;
+    let sum = 0;
+    this._fetchFractions.forEach((fraction) => {
+      sum += fraction;
+    });
+    return Math.min(100, Math.round((sum / this._fetchTotal) * 100));
+  }
+
   _markDataAvailable() {
     if (this.hasData) return;
     this.hasData = true;
@@ -350,11 +488,20 @@ class ProtvistaUniprot extends LitElement {
       // Kick off every fetch immediately, but do NOT await them as a batch:
       // each category below only waits for its own urls, so fast tracks
       // render while slow ones are still downloading.
+      const uniqueUrls = [...new Set(urls)];
+      this._fetchTotal = uniqueUrls.length;
+      this._fetchDone = 0;
+      this._fetchFractions.clear();
       const pending = new Map<string, Promise<unknown>>(
-        [...new Set(urls)].map((url) => [
+        uniqueUrls.map((url) => [
           url,
-          fetchOne(url.replace('{accession}', accession)).then((payload) => {
+          fetchOne(url.replace('{accession}', accession), (loaded, total) =>
+            this._onFetchProgress(url, loaded, total)
+          ).then((payload) => {
             this.rawData[url] = payload as TrackPayload;
+            this._fetchFractions.set(url, 1);
+            this._fetchDone += 1;
+            this._renderProgress(true);
             this._onDataAvailable(payload);
             return payload;
           }),
@@ -474,8 +621,9 @@ class ProtvistaUniprot extends LitElement {
         `#${CSS.escape(`track-${id}`)}`
       );
 
-      // set data if it hasn't changed
-      if (element && element.data !== data) {
+      // Set data only if this exact object hasn't been pushed before
+      if (element && this._assignedTrackData.get(element) !== data) {
+        this._assignedTrackData.set(element, data);
         element.data = data as NightingaleTrackCanvas['data'];
       }
       const currentCategory = this.config?.categories.find(
@@ -511,7 +659,10 @@ class ProtvistaUniprot extends LitElement {
           // makes the track re-process and redraw everything, which is very
           // expensive for dense tracks (e.g. 240k+ variants for TITIN) and
           // this method runs after every lit update.
-          if (elementTrack && elementTrack.data !== trackData) {
+          if (
+            elementTrack &&
+            this._assignedTrackData.get(elementTrack) !== trackData
+          ) {
             this._assignTrackDataWhenVisible(elementTrack, trackData);
           }
         }
@@ -585,6 +736,7 @@ class ProtvistaUniprot extends LitElement {
     const emitter = this.querySelector('nightingale-navigation');
     emitter?.dispatchEvent(
       new CustomEvent('change', {
+        // key must match the manager's observed attribute name
         detail: { highlight },
         bubbles: true,
         cancelable: true,
@@ -763,8 +915,12 @@ class ProtvistaUniprot extends LitElement {
     this.displayCoordinates = {};
     this.gotoError = undefined;
     this._genomicCoordinates = undefined;
+    this._fetchFractions.clear();
+    this._fetchDone = 0;
+    this._fetchTotal = 0;
     this.structureHighlightTracks.clear();
     this._structureGroupHighlight = '';
+    this._clickedFeatureHighlight = '';
     // The open/closed arrow state is toggled imperatively via classList,
     // so lit won't reset it on re-render
     this.querySelectorAll('.category-label.open').forEach((el) =>
@@ -779,7 +935,9 @@ class ProtvistaUniprot extends LitElement {
    * most are below the fold.
    */
   _assignTrackDataWhenVisible(element: NightingaleTrackCanvas, data: unknown) {
+    if (this._assignedTrackData.get(element) === data) return;
     if (typeof IntersectionObserver === 'undefined') {
+      this._assignedTrackData.set(element, data);
       element.data = data as NightingaleTrackCanvas['data'];
       return;
     }
@@ -793,6 +951,7 @@ class ProtvistaUniprot extends LitElement {
             this._pendingTrackData.delete(entry.target);
             this._trackVisibilityObserver?.unobserve(entry.target);
             if (pending !== undefined) {
+              this._assignedTrackData.set(entry.target, pending);
               (entry.target as NightingaleTrackCanvas).data =
                 pending as NightingaleTrackCanvas['data'];
             }
@@ -891,12 +1050,54 @@ class ProtvistaUniprot extends LitElement {
         this.displayCoordinates.end = e.detail.displayend;
       }
 
+      // 3D -> 1D: a residue selection made inside the Mol* viewer arrives
+      // as a change event from nightingale-structure carrying only a
+      // highlight; bring the 1D view to that region so both stay in sync
+      if (
+        typeof e.detail?.highlight === 'string' &&
+        e.detail.highlight &&
+        (e.target as Element)?.tagName?.toLowerCase() ===
+          'nightingale-structure'
+      ) {
+        const [rawStart, rawEnd] = e.detail.highlight
+          .split(',')[0]
+          .split(':')
+          .map(Number);
+        if (Number.isFinite(rawStart) && rawStart >= 1) {
+          this._navigateTo(rawStart, rawEnd || rawStart);
+        }
+      }
+
       if (!this.notooltip) {
         if (e.detail?.eventType === 'click') {
           this._updateTooltip(e);
         } else if (!e.detail?.eventType || e.detail.eventType === 'reset') {
           // Zoom/pan/reset: any open tooltip is now out of place
           this._hideTooltip();
+        }
+      }
+
+      // 1D -> 3D: clicking a feature/variant mirrors its range onto the
+      // structure (nightingale-structure never hears manager highlights)
+      if (e.detail?.eventType === 'click' && !this.nostructure) {
+        const feature = e.detail.feature as
+          | {
+              start?: number | string;
+              begin?: number | string;
+              end?: number | string;
+            }
+          | undefined;
+        const start = Number(feature?.start ?? feature?.begin);
+        const end = Number(feature?.end ?? start);
+        if (Number.isFinite(start) && start >= 1) {
+          const next = `${Math.trunc(start)}:${Math.trunc(
+            Number.isFinite(end) ? Math.max(start, end) : start
+          )}`;
+          // Re-clicking the same feature must not trigger a re-render
+          if (next !== this._clickedFeatureHighlight) {
+            this._clickedFeatureHighlight = next;
+            this.requestUpdate();
+          }
         }
       }
     });
@@ -937,8 +1138,9 @@ class ProtvistaUniprot extends LitElement {
   }
 
   _hideTooltip() {
-    if (this.tooltip.visible) {
+    if (this.tooltip.visible || this._clickedFeatureHighlight) {
       this.tooltip = { ...this.tooltip, visible: false };
+      this._clickedFeatureHighlight = '';
       this.requestUpdate();
     }
   }
@@ -995,15 +1197,36 @@ class ProtvistaUniprot extends LitElement {
     return this;
   }
 
+  get _progressTemplate() {
+    if (this._fetchTotal === 0 || this._fetchDone >= this._fetchTotal) {
+      return '';
+    }
+    const percent = this._fetchProgressPercent;
+    return html`
+      <div
+        class="protvista-progress"
+        role="progressbar"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="${percent}"
+        aria-label="Loading annotation data"
+      >
+        <div class="protvista-progress__bar" style="width: ${percent}%"></div>
+        <span class="protvista-progress__label"
+          >Loading annotation data ${this._fetchDone}/${this._fetchTotal}</span
+        >
+      </div>
+    `;
+  }
+
   render() {
     // Component isn't ready
     if (!this.sequence || !this.config || this.suspend) {
       return html``;
     }
     if (this.loading) {
-      return html`<div class="protvista-loader">
-        ${svg`${unsafeHTML(loaderIcon)}`}
-      </div>`;
+      return html`${this._progressTemplate}
+        <div class="protvista-loader">${svg`${unsafeHTML(loaderIcon)}`}</div>`;
     }
     if (!this.hasData) {
       return html`<div class="protvista-no-results">
@@ -1011,6 +1234,7 @@ class ProtvistaUniprot extends LitElement {
       </div>`;
     }
     return html`
+      ${this._progressTemplate}
       <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
         <div class="protvista-goto__row">
           <label for="protvista-goto-input">Go to position</label>
@@ -1229,7 +1453,7 @@ class ProtvistaUniprot extends LitElement {
           ? html`
               <protvista-uniprot-structure
                 accession="${this.accession || ''}"
-                .highlight=${this._structureGroupHighlight}
+                .highlight=${this._combinedStructureHighlight}
               ></protvista-uniprot-structure>
             `
           : ''}

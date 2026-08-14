@@ -1,0 +1,48 @@
+name: E2E smoke
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Browser smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build demo
+        run: yarn build:demo
+
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Serve demo
+        run: python3 -m http.server 4573 --directory demo &
+
+      - name: Run smoke tests
+        # EBI's edge drops connections from headless-Chromium on Actions
+        # runners (ERR_EMPTY_RESPONSE on every request), while plain HTTP
+        # clients work - so route API traffic through Node's fetch
+        env:
+          E2E_PROXY: '1'
+        run: node e2e/smoke.mjs http://localhost:4573
+
+      - name: Upload failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failure
+          path: e2e-failure.png
+          if-no-files-found: ignore
