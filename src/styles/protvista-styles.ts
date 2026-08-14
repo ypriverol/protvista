@@ -130,6 +130,50 @@ export default css`
     padding: 0.4rem 0.6rem;
   }
 
+  .structure-selection-legend {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    padding: 0.35rem 0.5rem;
+    background: var(--protvista-hover-background);
+    border: 1px solid var(--protvista-track-background);
+    border-radius: 4px;
+    margin-bottom: 0.4rem;
+  }
+
+  .structure-selection-legend__title {
+    color: #667;
+  }
+
+  .structure-selection-legend__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.1rem 0.45rem;
+    background: #fff;
+    border: 1px solid var(--protvista-track-background);
+    border-radius: 10px;
+  }
+
+  .structure-selection-legend__chip i {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .structure-selection-legend__clear {
+    margin-left: auto;
+    border: none;
+    background: none;
+    color: var(--protvista-link-color);
+    cursor: pointer;
+    font-size: 0.8rem;
+    text-decoration: underline;
+  }
+
   .protvista-goto {
     display: flex;
     flex-direction: column;

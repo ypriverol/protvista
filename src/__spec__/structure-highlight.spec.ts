@@ -77,3 +77,50 @@ describe('buildHighlight', () => {
     expect(highlight.split(',')).toHaveLength(500);
   });
 });
+
+describe('buildStructureLegend', () => {
+  const categories = [
+    {
+      name: 'DOMAINS',
+      label: 'Domains',
+      color: '#123456',
+      tracks: [
+        { name: 'domain', label: 'Domain', color: '#654321' },
+        { name: 'repeat', label: 'Repeat' },
+      ],
+    },
+  ];
+
+  it('uses track label and colour, falling back to category colour', async () => {
+    const { buildStructureLegend } =
+      await import('../utils/structure-highlight');
+    const data = {
+      'DOMAINS-domain': [
+        { start: 1, end: 5 },
+        { start: 20, end: 30 },
+      ],
+      'DOMAINS-repeat': [{ start: 40, end: 45 }],
+    };
+    const legend = buildStructureLegend(
+      categories,
+      ['DOMAINS-domain', 'DOMAINS-repeat'],
+      data
+    );
+    expect(legend).toEqual([
+      { key: 'DOMAINS-domain', label: 'Domain', color: '#654321', count: 2 },
+      { key: 'DOMAINS-repeat', label: 'Repeat', color: '#123456', count: 1 },
+    ]);
+  });
+
+  it('tolerates unknown keys and missing data', async () => {
+    const { buildStructureLegend } =
+      await import('../utils/structure-highlight');
+    const legend = buildStructureLegend(categories, ['X-y'], {});
+    expect(legend[0]).toEqual({
+      key: 'X-y',
+      label: 'y',
+      color: '#00639a',
+      count: 0,
+    });
+  });
+});

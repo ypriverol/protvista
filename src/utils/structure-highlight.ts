@@ -87,3 +87,50 @@ export const buildHighlight = (
     truncated,
   };
 };
+
+export type LegendEntry = {
+  key: string;
+  label: string;
+  color: string;
+  count: number;
+};
+
+type LegendCategory = {
+  name: string;
+  label?: string;
+  color?: string;
+  tracks?: {
+    name: string;
+    label?: string;
+    color?: string;
+  }[];
+};
+
+/**
+ * Human-readable legend for the tracks currently highlighted on the 3D
+ * structure: the structure paint is a single colour (the nightingale
+ * highlight channel), so the legend carries each selection's identity and
+ * its 1D track colour instead.
+ */
+export const buildStructureLegend = (
+  categories: LegendCategory[] | undefined,
+  selectedKeys: Iterable<string>,
+  trackData: Record<string, unknown>
+): LegendEntry[] => {
+  const entries: LegendEntry[] = [];
+  for (const key of selectedKeys) {
+    const separator = key.indexOf('-');
+    const categoryName = key.slice(0, separator);
+    const trackName = key.slice(separator + 1);
+    const category = categories?.find((c) => c.name === categoryName);
+    const track = category?.tracks?.find((t) => t.name === trackName);
+    const intervals = mergeIntervals(collectIntervals(trackData[key]));
+    entries.push({
+      key,
+      label: track?.label || trackName || key,
+      color: track?.color || category?.color || '#00639a',
+      count: intervals.length,
+    });
+  }
+  return entries;
+};

@@ -55,7 +55,11 @@ import {
   clampWindow,
   GnCoordinate,
 } from './utils/coordinate-navigation';
-import { buildHighlight } from './utils/structure-highlight';
+import {
+  buildHighlight,
+  buildStructureLegend,
+  LegendEntry,
+} from './utils/structure-highlight';
 import {
   buildRegionChunks,
   withLocationParam,
@@ -323,8 +327,10 @@ class ProtvistaUniprot extends LitElement {
   // on the 3D structure (and across all tracks) as a group
   private structureHighlightTracks = new Set<string>();
   private _structureGroupHighlight = '';
+  private _structureLegend: LegendEntry[] = [];
   // Range of the last clicked 1D feature, mirrored onto the 3D structure
   private _clickedFeatureHighlight = '';
+  private _clickedFeatureLabel = '';
 
   get _combinedStructureHighlight(): string {
     return [this._structureGroupHighlight, this._clickedFeatureHighlight]
@@ -986,8 +992,20 @@ class ProtvistaUniprot extends LitElement {
     this._refreshStructureHighlight();
   }
 
+  _clearStructureHighlight() {
+    this.structureHighlightTracks.clear();
+    this._clickedFeatureHighlight = '';
+    this._clickedFeatureLabel = '';
+    this._refreshStructureHighlight();
+  }
+
   /** Rebuild the group highlight from the currently toggled tracks */
   _refreshStructureHighlight() {
+    this._structureLegend = buildStructureLegend(
+      this.config?.categories,
+      this.structureHighlightTracks,
+      this.data
+    );
     const { highlight, truncated } = buildHighlight(
       [...this.structureHighlightTracks].map((key) => this.data[key])
     );
@@ -1188,7 +1206,9 @@ class ProtvistaUniprot extends LitElement {
     this._deferredLoading.clear();
     this.structureHighlightTracks.clear();
     this._structureGroupHighlight = '';
+    this._structureLegend = [];
     this._clickedFeatureHighlight = '';
+    this._clickedFeatureLabel = '';
     // The open/closed arrow state is toggled imperatively via classList,
     // so lit won't reset it on re-render
     this.querySelectorAll('.category-label.open').forEach((el) =>
@@ -1369,6 +1389,13 @@ class ProtvistaUniprot extends LitElement {
           // Re-clicking the same feature must not trigger a re-render
           if (next !== this._clickedFeatureHighlight) {
             this._clickedFeatureHighlight = next;
+            this._clickedFeatureLabel = `${
+              (feature as { type?: string })?.type ?? 'Feature'
+            } ${next.split(':')[0]}${
+              next.split(':')[0] !== next.split(':')[1]
+                ? '-' + next.split(':')[1]
+                : ''
+            }`;
             this.requestUpdate();
           }
         }
@@ -1414,6 +1441,7 @@ class ProtvistaUniprot extends LitElement {
     if (this.tooltip.visible || this._clickedFeatureHighlight) {
       this.tooltip = { ...this.tooltip, visible: false };
       this._clickedFeatureHighlight = '';
+      this._clickedFeatureLabel = '';
       this.requestUpdate();
     }
   }
@@ -1749,6 +1777,20 @@ class ProtvistaUniprot extends LitElement {
               <protvista-uniprot-structure
                 accession="${this.accession || ''}"
                 .highlight=${this._combinedStructureHighlight}
+                .highlightLegend=${[
+                  ...this._structureLegend,
+                  ...(this._clickedFeatureHighlight
+                    ? [
+                        {
+                          key: '__clicked__',
+                          label: this._clickedFeatureLabel,
+                          color: '#ffe999',
+                          count: 1,
+                        },
+                      ]
+                    : []),
+                ]}
+                @clear-structure-highlight=${this._clearStructureHighlight}
               ></protvista-uniprot-structure>
             `
           : ''}

@@ -488,6 +488,13 @@ class ProtvistaUniprotStructure extends LitElement {
   noTable?: boolean;
   /** Residue ranges ("s:e,s:e") forwarded to the 3D viewer */
   highlight?: string;
+  /** Legend entries for what is currently highlighted (label/colour/count) */
+  highlightLegend?: {
+    key: string;
+    label: string;
+    color: string;
+    count: number;
+  }[];
 
   constructor() {
     super();
@@ -506,6 +513,7 @@ class ProtvistaUniprotStructure extends LitElement {
   static get properties() {
     return {
       highlight: { type: String },
+      highlightLegend: { type: Array },
       accession: { type: String },
       structureId: { type: String },
       checksum: { type: String },
@@ -878,6 +886,37 @@ class ProtvistaUniprotStructure extends LitElement {
                   ${this.metaInfo}
                 </div>
               `
+            : nothing}
+          ${this.highlightLegend?.length
+            ? html`<div class="structure-selection-legend">
+                <span class="structure-selection-legend__title"
+                  >Highlighted on structure:</span
+                >
+                ${this.highlightLegend.map(
+                  (entry) =>
+                    html`<span
+                      class="structure-selection-legend__chip"
+                      title="${entry.count} region${entry.count === 1
+                        ? ''
+                        : 's'}"
+                      ><i style="background:${entry.color}"></i
+                      >${entry.label}</span
+                    >`
+                )}
+                <button
+                  type="button"
+                  class="structure-selection-legend__clear"
+                  @click=${() =>
+                    this.dispatchEvent(
+                      new CustomEvent('clear-structure-highlight', {
+                        bubbles: true,
+                        composed: true,
+                      })
+                    )}
+                >
+                  Clear
+                </button>
+              </div>`
             : nothing}
           ${this.structureId
             ? html`<nightingale-structure
