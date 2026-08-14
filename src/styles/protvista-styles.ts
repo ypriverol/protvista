@@ -159,6 +159,13 @@ export default css`
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
     padding: 0.6rem 0.8rem 0.7rem;
     font-size: 0.85rem;
+    /* an ancestor inside the manager zeroes line-height to remove
+       inter-track gaps; restore normal text flow for the panel */
+    line-height: 1.4;
+  }
+
+  .protvista-dossier li {
+    margin: 0.15rem 0;
   }
 
   .protvista-dossier__header {
