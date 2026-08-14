@@ -14,6 +14,9 @@ export const buildRegionChunks = (
   chunkSize: number
 ): RegionChunk[] => {
   const chunks: RegionChunk[] = [];
+  // Guard against a non-positive size looping forever; the config
+  // validator enforces >= 1, but this is an exported utility
+  if (!Number.isFinite(chunkSize) || chunkSize < 1) return chunks;
   for (let start = 1; start <= sequenceLength; start += chunkSize) {
     chunks.push({
       start,
@@ -31,8 +34,8 @@ type FeaturePayload = {
   [key: string]: unknown;
 };
 
-const featureKey = (feature: Record<string, unknown>): string =>
-  [
+const featureKey = (feature: Record<string, unknown>): string | null => {
+  const parts = [
     feature.begin,
     feature.end,
     feature.wildType,
@@ -41,7 +44,14 @@ const featureKey = (feature: Record<string, unknown>): string =>
     Array.isArray(feature.genomicLocation)
       ? feature.genomicLocation.join(',')
       : feature.genomicLocation,
-  ].join('|');
+  ];
+  // A feature with none of the identifying fields cannot be safely
+  // deduplicated - treat every such feature as distinct
+  if (parts.every((p) => p === undefined || p === null || p === '')) {
+    return null;
+  }
+  return parts.join('|');
+};
 
 /**
  * Merge chunk payloads (in chunk order; missing entries are chunks that
@@ -61,8 +71,10 @@ export const mergeChunkPayloads = (
   for (const payload of arrived) {
     for (const feature of payload.features ?? []) {
       const key = featureKey(feature);
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (key !== null) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
       features.push(feature);
     }
   }

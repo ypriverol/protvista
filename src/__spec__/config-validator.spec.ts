@@ -203,4 +203,62 @@ describe('schema/validator consistency', () => {
   it('adapter enums match', () => {
     expect(schema.$defs.adapter.enum).toEqual([...ADAPTERS]);
   });
+
+  it('category property keys match the schema (minus $-internal)', () => {
+    const schemaKeys = Object.keys(schema.$defs.category.properties).sort();
+    const config = {
+      categories: [
+        Object.fromEntries([
+          ['name', 'A'],
+          ['label', 'A'],
+          ['trackType', 'nightingale-track-canvas'],
+          ['tracks', []],
+          ...schemaKeys
+            .filter(
+              (k) => !['name', 'label', 'trackType', 'tracks'].includes(k)
+            )
+            .map((k) => [
+              k,
+              ['lazyThreshold', 'regionChunkSize'].includes(k) ? 10 : 'x',
+            ]),
+        ]),
+      ],
+    };
+    // Every schema-declared category key must be accepted by the validator
+    expect(validateConfig(config).valid).toBe(true);
+  });
+
+  it('track property keys match the schema', () => {
+    const schemaKeys = Object.keys(schema.$defs.track.properties);
+    const track = Object.fromEntries([
+      ['name', 't'],
+      ['trackType', 'nightingale-track-canvas'],
+      ['tooltip', ''],
+      ['data', [{ url: 'https://x/y', adapter: 'feature-adapter' }]],
+      ...schemaKeys
+        .filter(
+          (k) =>
+            ![
+              'name',
+              'trackType',
+              'tooltip',
+              'data',
+              'filterComponent',
+            ].includes(k)
+        )
+        .map((k) => [k, 'x']),
+      ['filterComponent', 'nightingale-filter'],
+    ]);
+    const config = {
+      categories: [
+        {
+          name: 'A',
+          label: 'A',
+          trackType: 'nightingale-track-canvas',
+          tracks: [track],
+        },
+      ],
+    };
+    expect(validateConfig(config).valid).toBe(true);
+  });
 });

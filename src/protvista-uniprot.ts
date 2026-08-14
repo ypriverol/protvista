@@ -502,6 +502,14 @@ class ProtvistaUniprot extends LitElement {
     let promise = this._urlPromises.get(url);
     if (!promise) {
       const generation = this._loadGeneration;
+      // A new batch starting from idle is its own progress session;
+      // otherwise a later (deferred) download shows a bar pre-filled at
+      // ~95% instead of tracking the download it represents
+      if (this._fetchTotal > 0 && this._fetchDone === this._fetchTotal) {
+        this._fetchTotal = 0;
+        this._fetchDone = 0;
+        this._fetchFractions.clear();
+      }
       this._fetchTotal += 1;
       promise = fetchOne(
         url.replace('{accession}', accession),
@@ -533,85 +541,112 @@ class ProtvistaUniprot extends LitElement {
     // Wait only for the urls this category actually uses
     const categoryUrls = [
       ...new Set(category.tracks.flatMap(({ data }) => data[0].url).flat()),
-    ];
-    await Promise.all(
+    ] as string[];
+    const payloads = await Promise.all(
       categoryUrls.map((url) => this._ensureUrlFetched(url, accession))
     );
     if (generation !== this._loadGeneration) return;
+    // A cached promise only wrote rawData once, on first resolution; a
+    // category sharing a url with an already-released one must repopulate
+    payloads.forEach((payload, i) => {
+      if (payload != null && !(categoryUrls[i] in this.rawData)) {
+        this.rawData[categoryUrls[i]] = payload as TrackPayload;
+      }
+    });
     await this._transformCategoryTracks(category);
   }
 
   /** Transform this.rawData into track/category data for one category */
   async _transformCategoryTracks(
-    category: ProtvistaConfig['categories'][number]
+    category: ProtvistaConfig['categories'][number],
+    intermediate = false
   ) {
+    const generation = this._loadGeneration;
     const { name: categoryName, tracks, trackType } = category;
     const categoryData = await Promise.all(
-      tracks.map(async ({ data: dataConfig, name: trackName, filter }) => {
-        const { url, adapter } = dataConfig[0]; // TODO handle array
-        const trackData = (Array.isArray(url) ? url : [url]).map(
-          (url) => this.rawData[url] || []
-        );
-
-        if (
-          !trackData ||
-          (adapter === 'variation-adapter' &&
-            Array.isArray(trackData[0]) &&
-            trackData[0].length === 0)
-        ) {
-          return;
-        }
-
-        // 1. Convert data
-        let transformedData = adapter
-          ? await callAdapter(adapter, trackData)
-          : trackData;
-
-        if (adapter === 'interpro-adapter') {
-          const representativeDomains: TransformedInterPro = [];
-          (transformedData as TransformedInterPro | undefined)?.forEach(
-            (feature) => {
-              feature.locations?.forEach((location) => {
-                if (location.representative) {
-                  location.fragments?.forEach((fragment) => {
-                    representativeDomains.push({
-                      ...feature,
-                      type: 'InterPro Representative Domain',
-                      start: fragment.start,
-                      end: fragment.end,
-                    });
-                  });
-                }
-              });
-            }
+      tracks.map(
+        async ({
+          data: dataConfig,
+          name: trackName,
+          filter,
+          trackType: tt,
+        }) => {
+          // At intermediate chunk checkpoints, skip re-feeding the heavy
+          // detail canvas: re-processing the full growing variant set at
+          // every checkpoint is exactly the multi-second layout cost the
+          // data-identity guard exists to avoid. Summaries (counts graph)
+          // still refresh; the canvas gets one feed at completion.
+          if (intermediate && tt === 'nightingale-variation-canvas') {
+            return this.data[`${categoryName}-${trackName}`];
+          }
+          const { url, adapter } = dataConfig[0]; // TODO handle array
+          const trackData = (Array.isArray(url) ? url : [url]).map(
+            (url) => this.rawData[url] || []
           );
-          transformedData = representativeDomains;
-        }
 
-        // 2. Filter raw data if filter is specified
-        const filteredData =
-          Array.isArray(transformedData) && filter
-            ? transformedData.filter(
-                ({ type }: { type?: string }) => type === filter
-              )
-            : transformedData;
-        if (!filteredData) {
-          return;
-        }
+          if (
+            !trackData ||
+            (adapter === 'variation-adapter' &&
+              Array.isArray(trackData[0]) &&
+              trackData[0].length === 0)
+          ) {
+            return;
+          }
 
-        // 3. Assign track data
-        this.data[`${categoryName}-${trackName}`] = filteredData;
+          // 1. Convert data
+          let transformedData = adapter
+            ? await callAdapter(adapter, trackData)
+            : trackData;
 
-        if (trackName === 'variation') {
-          this.transformedVariants = filteredData as {
-            sequence: string;
-            variants: TransformedVariant[];
-          };
+          if (adapter === 'interpro-adapter') {
+            const representativeDomains: TransformedInterPro = [];
+            (transformedData as TransformedInterPro | undefined)?.forEach(
+              (feature) => {
+                feature.locations?.forEach((location) => {
+                  if (location.representative) {
+                    location.fragments?.forEach((fragment) => {
+                      representativeDomains.push({
+                        ...feature,
+                        type: 'InterPro Representative Domain',
+                        start: fragment.start,
+                        end: fragment.end,
+                      });
+                    });
+                  }
+                });
+              }
+            );
+            transformedData = representativeDomains;
+          }
+
+          // 2. Filter raw data if filter is specified
+          const filteredData =
+            Array.isArray(transformedData) && filter
+              ? transformedData.filter(
+                  ({ type }: { type?: string }) => type === filter
+                )
+              : transformedData;
+          if (!filteredData) {
+            return;
+          }
+
+          // 3. Assign track data (unless a reset happened during the
+          // adapter transform above)
+          if (generation !== this._loadGeneration) return;
+          this.data[`${categoryName}-${trackName}`] = filteredData;
+
+          if (trackName === 'variation') {
+            this.transformedVariants = filteredData as {
+              sequence: string;
+              variants: TransformedVariant[];
+            };
+          }
+          return filteredData;
         }
-        return filteredData;
-      })
+      )
     );
 
+    if (generation !== this._loadGeneration) return;
     this.data[categoryName] =
       trackType === 'nightingale-linegraph-track' ||
       trackType === 'nightingale-colored-sequence'
@@ -619,6 +654,16 @@ class ProtvistaUniprot extends LitElement {
         : (categoryData.flat() as Record<string, unknown>[]);
 
     this._onCategoryDataAssigned(this.data[categoryName]);
+
+    // A '3D'-toggled track whose data was just replaced (chunk checkpoint)
+    // must not keep highlighting stale intervals on the structure
+    if (
+      [...this.structureHighlightTracks].some((key) =>
+        key.startsWith(`${categoryName}-`)
+      )
+    ) {
+      this._refreshStructureHighlight();
+    }
 
     // Re-render now: this category is ready even if others are still
     // fetching. `updated()` pushes the new data into the track elements.
@@ -650,18 +695,32 @@ class ProtvistaUniprot extends LitElement {
     let lastCheckpoint = 0;
     let transforming = Promise.resolve();
 
-    const refresh = () => {
+    const refresh = (intermediate = false) => {
       // Serialise transforms; each one reads the current merged rawData
       transforming = transforming.then(() => {
         if (generation !== this._loadGeneration) return;
+        let failed = 0;
         for (const url of urls) {
-          const merged = mergeChunkPayloads(
-            slotsByUrl.get(url) as (Record<string, unknown> | null)[]
-          );
+          const slots = slotsByUrl.get(url) as (Record<
+            string,
+            unknown
+          > | null)[];
+          failed += slots.filter((slot) => slot === null).length;
+          const merged = mergeChunkPayloads(slots);
           if (merged) this.rawData[url] = merged as TrackPayload;
         }
-        return this._transformCategoryTracks(category);
+        if (!intermediate && failed > 0) {
+          console.warn(
+            `${failed} of ${chunks.length * urls.length} region requests for ${category.name} failed; the rendered data has gaps`
+          );
+        }
+        return this._transformCategoryTracks(category, intermediate);
       });
+      // A failed transform (e.g. adapter error on a partial merge) must
+      // not poison the chain and skip every later checkpoint
+      transforming = transforming.catch((error) =>
+        console.error('Chunked transform failed', error)
+      );
       return transforming;
     };
 
@@ -712,14 +771,24 @@ class ProtvistaUniprot extends LitElement {
     const generation = this._loadGeneration;
     this._deferredLoading.add(name);
     this.requestUpdate();
-    await this._processCategory(category, accession);
+    try {
+      await this._processCategory(category, accession);
+    } catch (error) {
+      console.error(`Couldn't load deferred category ${name}`, error);
+      if (generation === this._loadGeneration) {
+        // Allow the user to retry by clicking again
+        this._deferredCategories.add(name);
+      }
+    }
     if (generation !== this._loadGeneration) return;
     this._deferredLoading.delete(name);
-    // Release this category's raw payloads (e.g. 85MB of TITIN variants)
+    // Release this category's raw payloads (e.g. 85MB of TITIN variants);
+    // resolved promises retain their payloads, so drop them as well
     for (const url of new Set(
       category.tracks.flatMap(({ data }) => data[0].url).flat()
-    )) {
+    ) as Set<string>) {
       delete this.rawData[url];
+      this._urlPromises.delete(url);
     }
     this.requestUpdate();
   }
@@ -763,18 +832,36 @@ class ProtvistaUniprot extends LitElement {
         this._ensureUrlFetched(url, accession);
       }
 
-      await Promise.all([
-        ...eager.map((category) => this._processCategory(category, accession)),
-        ...chunked.map((category) =>
-          this._processCategoryChunked(category, accession)
-        ),
-      ]);
+      try {
+        await Promise.all([
+          ...eager.map((category) =>
+            this._processCategory(category, accession)
+          ),
+          ...chunked.map((category) =>
+            this._processCategoryChunked(category, accession)
+          ),
+        ]);
+      } catch (error) {
+        // A failed category must not strand the loader for the others
+        console.error('Category loading failed', error);
+      }
 
       // Every eager category has been transformed into this.data; release
-      // the raw payloads instead of pinning them in memory. Deferred
-      // fetches have not started yet, so nothing of theirs is lost.
+      // the raw payloads instead of pinning them in memory (both the
+      // rawData entries and the resolved promises in the dedup cache,
+      // which otherwise retain the parsed payloads). Deferred fetches have
+      // not started yet, so nothing of theirs is lost.
       if (generation !== this._loadGeneration) return;
-      this.rawData = {};
+      // Delete only the eager urls: wiping the whole rawData would clobber
+      // a deferred category the user started loading in the meantime
+      for (const url of new Set(
+        eager.flatMap(({ tracks }) =>
+          tracks.flatMap(({ data }) => data[0].url).flat()
+        )
+      )) {
+        delete this.rawData[url];
+        this._urlPromises.delete(url);
+      }
     }
     if (generation !== this._loadGeneration) return;
     this.loading = false;
@@ -896,6 +983,11 @@ class ProtvistaUniprot extends LitElement {
     } else {
       this.structureHighlightTracks.delete(trackKey);
     }
+    this._refreshStructureHighlight();
+  }
+
+  /** Rebuild the group highlight from the currently toggled tracks */
+  _refreshStructureHighlight() {
     const { highlight, truncated } = buildHighlight(
       [...this.structureHighlightTracks].map((key) => this.data[key])
     );
@@ -1203,8 +1295,12 @@ class ProtvistaUniprot extends LitElement {
 
     if (!this.accession) return;
     // Await the entry: the sequence length decides which categories defer
-    // (lazyThreshold) before any track fetch starts
+    // before any track fetch starts. Capture the generation so a stale
+    // _init (superseded by an accession switch mid-await) cannot
+    // overwrite the new protein's sequence or start a duplicate load.
+    const generation = this._loadGeneration;
     const entryData = await this.loadEntry(this.accession);
+    if (generation !== this._loadGeneration) return;
     if (entryData) {
       this.sequence = entryData.sequence.sequence;
       this.displayCoordinates = { start: 1, end: this.sequence?.length };
