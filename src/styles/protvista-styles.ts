@@ -130,6 +130,104 @@ export default css`
     padding: 0.4rem 0.6rem;
   }
 
+  .protvista-uniprot-tooltip-actions {
+    padding: 0.35rem 0.6rem 0.5rem;
+  }
+
+  .protvista-uniprot-tooltip-actions button {
+    background: #fff;
+    color: var(--protvista-link-color);
+    border: none;
+    border-radius: 3px;
+    padding: 0.25rem 0.55rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .protvista-dossier {
+    position: fixed;
+    right: 14px;
+    top: 90px;
+    z-index: 49000;
+    width: 330px;
+    max-height: 72vh;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid var(--protvista-track-background);
+    border-top: 3px solid var(--protvista-category-background);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    padding: 0.6rem 0.8rem 0.7rem;
+    font-size: 0.85rem;
+  }
+
+  .protvista-dossier__header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .protvista-dossier__header button {
+    margin-left: auto;
+    border: none;
+    background: none;
+    font-size: 1.05rem;
+    cursor: pointer;
+    color: #667;
+  }
+
+  .protvista-dossier__plddt {
+    font-size: 0.72rem;
+    color: #667;
+  }
+
+  .protvista-dossier h5 {
+    margin: 0.6rem 0 0.2rem;
+    font-size: 0.8rem;
+  }
+
+  .protvista-dossier ul {
+    margin: 0;
+    padding-left: 1rem;
+  }
+
+  .protvista-dossier__row {
+    cursor: pointer;
+  }
+
+  .protvista-dossier__row:hover {
+    background: var(--protvista-hover-background);
+  }
+
+  .protvista-dossier__muted {
+    color: #667;
+    font-weight: 400;
+    font-size: 0.78rem;
+  }
+
+  .protvista-dossier__badge {
+    font-style: normal;
+    font-size: 0.7rem;
+    background: var(--protvista-category-background);
+    color: #fff;
+    border-radius: 8px;
+    padding: 0 0.4rem;
+    margin-left: 0.3rem;
+  }
+
+  .protvista-dossier__actions {
+    margin-top: 0.6rem;
+  }
+
+  .protvista-dossier__actions button {
+    border: 1px solid var(--protvista-track-background);
+    background: #fff;
+    color: var(--protvista-link-color);
+    border-radius: 3px;
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+  }
+
   .protvista-goto {
     display: flex;
     flex-direction: column;
