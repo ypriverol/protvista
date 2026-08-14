@@ -18,12 +18,24 @@ vi.hoisted(() => {
 
 import ProtvistaUniprot from '../protvista-uniprot';
 
+type DiffDatum = {
+  start: number;
+  end: number;
+  type: string;
+  tooltipContent: string;
+};
+
 type TestableInstance = {
   accession?: string;
   sequence?: string;
   config?: { categories: { name: string; label: string }[] };
   data: Record<string, unknown>;
-  _comparison?: { identity: number; organism: string };
+  openCategories: string[];
+  _comparison?: {
+    identity: number;
+    organism: string;
+    diffCounts: { shared: number; referenceOnly: number; orthologOnly: number };
+  };
   _comparisonError?: string;
   _startComparison(acc: string): Promise<void>;
   _clearComparison(): void;
@@ -34,6 +46,13 @@ const createInstance = (): TestableInstance => {
   instance.accession = 'P00001';
   instance.sequence = 'MKLVWAGHRT';
   instance.config = { categories: [] };
+  // Reference protein annotations (track-level keys, as _loadData stores):
+  instance.data['PTM-mod_res'] = [
+    // phospho at 6: ortholog has the same site (its 4 maps here to 6)
+    { start: 6, end: 6, type: 'MOD_RES', description: 'Phosphoserine' },
+    // phospho at 3: falls in the region deleted from the ortholog
+    { start: 3, end: 3, type: 'MOD_RES', description: 'Phosphothreonine' },
+  ];
   return instance;
 };
 
@@ -43,7 +62,7 @@ describe('ortholog comparison', () => {
     vi.restoreAllMocks();
   });
 
-  it('injects the conservation category and projects ortholog features', async () => {
+  it('diffs annotations into shared / reference-only / ortholog-only tracks', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -64,12 +83,22 @@ describe('ortholog comparison', () => {
             ok: true,
             json: async () => ({
               features: [
+                // = reference phospho 6 (ortholog 4 -> reference 6)
+                {
+                  type: 'MOD_RES',
+                  begin: '4',
+                  end: '4',
+                  description: 'Phosphoserine',
+                },
+                // ortholog-only site (maps to reference 5-6)
                 {
                   type: 'ACT_SITE',
                   begin: '3',
                   end: '4',
                   description: 'catalytic',
                 },
+                // undiffable noise: must be ignored
+                { type: 'VARIANT', begin: '2', end: '2' },
               ],
             }),
           };
@@ -83,9 +112,11 @@ describe('ortholog comparison', () => {
     expect(instance._comparisonError).toBe(undefined);
     expect(instance._comparison?.organism).toBe('Mus musculus');
     expect(instance._comparison?.identity).toBe(1); // aligned part identical
+    // Category injected + auto-expanded
     expect(
       instance.config?.categories.some((c) => c.name === 'ORTHOLOG_COMPARISON')
     ).toBe(true);
+    expect(instance.openCategories).toContain('ORTHOLOG_COMPARISON');
 
     const conservation = instance.data['ORTHOLOG_COMPARISON-conservation'] as {
       start: number;
@@ -98,17 +129,35 @@ describe('ortholog comparison', () => {
       [5, 10],
     ]);
 
-    const projected = instance.data[
-      'ORTHOLOG_COMPARISON-ortholog_features'
-    ] as { start: number; end: number; tooltipContent: string }[];
-    // ortholog ACT_SITE 3-4 = W,A which map to reference 5-6
-    expect(projected).toHaveLength(1);
-    expect(projected[0].start).toBe(5);
-    expect(projected[0].end).toBe(6);
-    expect(projected[0].tooltipContent).toContain('P99999 3–4');
+    const shared = instance.data['ORTHOLOG_COMPARISON-shared'] as DiffDatum[];
+    expect(shared).toHaveLength(1);
+    expect(shared[0]).toMatchObject({ start: 6, end: 6, type: 'MOD_RES' });
+    expect(shared[0].tooltipContent).toContain('both');
+
+    const refOnly = instance.data[
+      'ORTHOLOG_COMPARISON-reference_only'
+    ] as DiffDatum[];
+    // the phospho in the deleted region has no mouse counterpart
+    expect(refOnly).toHaveLength(1);
+    expect(refOnly[0]).toMatchObject({ start: 3, type: 'MOD_RES' });
+
+    const orthoOnly = instance.data[
+      'ORTHOLOG_COMPARISON-ortholog_only'
+    ] as DiffDatum[];
+    // ACT_SITE 3-4 (W,A) maps to reference 5-6; VARIANT is filtered out
+    expect(orthoOnly).toHaveLength(1);
+    expect(orthoOnly[0]).toMatchObject({ start: 5, end: 6, type: 'ACT_SITE' });
+    expect(orthoOnly[0].tooltipContent).toContain('P99999 3–4');
+
+    expect(instance._comparison?.diffCounts).toEqual({
+      shared: 1,
+      referenceOnly: 1,
+      orthologOnly: 1,
+    });
 
     instance._clearComparison();
-    expect(instance.data['ORTHOLOG_COMPARISON-conservation']).toBe(undefined);
+    expect(instance.data['ORTHOLOG_COMPARISON-shared']).toBe(undefined);
+    expect(instance.openCategories).not.toContain('ORTHOLOG_COMPARISON');
     expect(
       instance.config?.categories.some((c) => c.name === 'ORTHOLOG_COMPARISON')
     ).toBe(false);

@@ -60,15 +60,21 @@ import {
   buildResidueDossier,
   dossierToText,
   plddtBucket,
+  collectDossierFeatures,
   CoordinateMap,
   ResidueDossier,
 } from './utils/residue-dossier';
 import {
   alignSequences,
   conservationRuns,
-  projectToReference,
   ConservationStatus,
 } from './utils/alignment';
+import {
+  diffFeatures,
+  normaliseType,
+  ComparableFeature,
+  DiffEntry,
+} from './utils/feature-diff';
 import { escapeHtml } from './utils/security';
 import { buildHighlight } from './utils/structure-highlight';
 import {
@@ -330,6 +336,7 @@ class ProtvistaUniprot extends LitElement {
     mapping: Int32Array;
     status: ConservationStatus[];
     orthologSequence: string;
+    diffCounts: { shared: number; referenceOnly: number; orthologOnly: number };
   };
   private _comparisonLoading = false;
   private _comparisonError?: string;
@@ -1428,21 +1435,58 @@ class ProtvistaUniprot extends LitElement {
    */
   static COMPARISON_CATEGORY = 'ORTHOLOG_COMPARISON';
 
+  /** Feature types excluded from the annotation diff: species-specific
+   * by nature (variants, conflicts, epitopes), whole-molecule spans, or
+   * secondary structure that only the experimentally solved protein has -
+   * their absence in the ortholog says nothing biological */
+  static UNDIFFABLE_TYPES = new Set([
+    'CHAIN',
+    'INIT_MET',
+    'SIGNAL',
+    'TRANSIT',
+    'PROPEP',
+    'VARIANT',
+    'MUTAGEN',
+    'MUTAGENESIS',
+    'CONFLICT',
+    'VAR_SEQ',
+    'NON_CONS',
+    'NON_TER',
+    'NON_STD',
+    'UNSURE',
+    'EPITOPE',
+    'ANTIGEN',
+    'HELIX',
+    'STRAND',
+    'TURN',
+    'CONSERVATION',
+  ]);
+
   async _startComparison(rawAccession: string) {
     const accession = rawAccession.trim().toUpperCase();
     if (!accession || !this.sequence) return;
+    // Drop any previous comparison so its synthetic tracks are not
+    // diffed as if they were annotations of the reference protein
+    this._clearComparison(false);
     this._comparisonLoading = true;
     this._comparisonError = undefined;
     this.requestUpdate();
     try {
-      const [entryResponse, featuresResponse] = await Promise.all([
-        fetch(`https://www.ebi.ac.uk/proteins/api/proteins/${accession}`, {
-          headers: { Accept: 'application/json' },
-        }),
-        fetch(`https://www.ebi.ac.uk/proteins/api/features/${accession}`, {
-          headers: { Accept: 'application/json' },
-        }),
-      ]);
+      const [entryResponse, featuresResponse, ptmResponse] = await Promise.all(
+        [
+          `https://www.ebi.ac.uk/proteins/api/proteins/${accession}`,
+          `https://www.ebi.ac.uk/proteins/api/features/${accession}`,
+          // Large-scale PTMs (PTMeXchange): most phosphosites live here,
+          // not in the curated features endpoint - without this, every
+          // large-scale site of the reference would look "only here"
+          `https://www.ebi.ac.uk/proteins/api/proteomics/ptm/${accession}`,
+        ].map((url) =>
+          fetch(url, { headers: { Accept: 'application/json' } }).catch(
+            () => undefined
+          )
+        )
+      );
+      if (!entryResponse) throw new Error(`Couldn't load ${accession}`);
       if (!entryResponse.ok) {
         throw new Error(
           `Couldn't load ${accession} (HTTP ${entryResponse.status})`
@@ -1459,14 +1503,6 @@ class ProtvistaUniprot extends LitElement {
         accession;
 
       const alignment = alignSequences(this.sequence, orthologSequence);
-      this._comparison = {
-        accession,
-        organism,
-        identity: alignment.identity,
-        mapping: alignment.mapping,
-        status: alignment.status,
-        orthologSequence,
-      };
 
       // Conservation band: contiguous runs of alignment status
       const STATUS_COLORS: Record<ConservationStatus, string> = {
@@ -1483,9 +1519,11 @@ class ProtvistaUniprot extends LitElement {
         tooltipContent: `<h5>${escapeHtml(run.status)}</h5><p>${run.start}–${run.end} vs ${escapeHtml(accession)}</p>`,
       }));
 
-      // Ortholog features projected through the alignment
-      const projected: Record<string, unknown>[] = [];
-      if (featuresResponse.ok) {
+      // Annotation diff: which compact features (PTMs, sites, motifs,
+      // disulfides...) are shared, only on this protein, or only on the
+      // ortholog - the question a conservation band alone cannot answer
+      const orthologFeatures: ComparableFeature[] = [];
+      if (featuresResponse?.ok) {
         const featurePayload = (await featuresResponse.json()) as {
           features?: {
             type?: string;
@@ -1494,34 +1532,160 @@ class ProtvistaUniprot extends LitElement {
             description?: string;
           }[];
         };
-        for (const feature of (featurePayload.features ?? []).slice(0, 800)) {
+        for (const feature of featurePayload.features ?? []) {
           const begin = Math.trunc(Number(feature.begin));
           const end = Math.trunc(Number(feature.end ?? begin));
           if (!Number.isFinite(begin) || begin < 1 || !feature.type) continue;
-          const target = projectToReference(
-            alignment.mapping,
-            begin,
-            Math.max(begin, end)
-          );
-          if (!target) continue; // absent from the reference
-          projected.push({
-            start: target.start,
-            end: target.end,
+          if (ProtvistaUniprot.UNDIFFABLE_TYPES.has(feature.type.toUpperCase()))
+            continue;
+          orthologFeatures.push({
+            start: begin,
+            end: Math.max(begin, end),
             type: feature.type,
-            tooltipContent: `<h4>${escapeHtml(feature.type)} (${escapeHtml(organism)})</h4><hr />${
-              feature.description
-                ? `<h5>Description</h5><p>${escapeHtml(feature.description)}</p>`
-                : ''
-            }<h5>Ortholog position</h5><p>${escapeHtml(accession)} ${begin}${end !== begin ? `–${end}` : ''} → here ${target.start}${target.end !== target.start ? `–${target.end}` : ''}</p>`,
+            description: feature.description,
           });
         }
       }
+      if (ptmResponse?.ok) {
+        // proteomics/ptm returns peptide-level features carrying a `ptms`
+        // array; each ptm position is relative to the peptide start
+        const ptmPayload = (await ptmResponse.json()) as {
+          features?: {
+            begin?: string;
+            ptms?: { name?: string; position?: number }[];
+          }[];
+        };
+        for (const peptide of ptmPayload.features ?? []) {
+          const begin = Math.trunc(Number(peptide.begin));
+          if (!Number.isFinite(begin) || begin < 1) continue;
+          for (const ptm of peptide.ptms ?? []) {
+            if (typeof ptm.position !== 'number') continue;
+            const site = begin + ptm.position - 1;
+            orthologFeatures.push({
+              start: site,
+              end: site,
+              type: 'MOD_RES',
+              description: ptm.name
+                ? `${ptm.name} (large-scale)`
+                : 'PTM (large-scale)',
+            });
+          }
+        }
+      }
+      // The same site can arrive from both endpoints (curated + large
+      // scale); duplicates would surface as phantom "only in ortholog"
+      // leftovers after one copy is matched
+      const seenOrtholog = new Set<string>();
+      const dedupedOrtholog = orthologFeatures.filter((f) => {
+        const key = `${normaliseType(f.type)}|${f.start}|${f.end}`;
+        if (seenOrtholog.has(key)) return false;
+        seenOrtholog.add(key);
+        return true;
+      });
+      const referenceFeatures: ComparableFeature[] = collectDossierFeatures(
+        this.data as Record<string, unknown>
+      )
+        .filter(
+          (f) => !ProtvistaUniprot.UNDIFFABLE_TYPES.has(f.type.toUpperCase())
+        )
+        .map((f) => ({
+          start: f.start,
+          end: f.end,
+          type: f.type,
+          description: f.description,
+        }));
+      // Same duplicate risk on the reference side (curated + large-scale)
+      const seenReference = new Set<string>();
+      const dedupedReference = referenceFeatures.filter((f) => {
+        const key = `${normaliseType(f.type)}|${f.start}|${f.end}`;
+        if (seenReference.has(key)) return false;
+        seenReference.add(key);
+        return true;
+      });
+      const diff = diffFeatures(
+        dedupedReference,
+        dedupedOrtholog,
+        alignment.mapping
+      );
+
+      this._comparison = {
+        accession,
+        organism,
+        identity: alignment.identity,
+        mapping: alignment.mapping,
+        status: alignment.status,
+        orthologSequence,
+        diffCounts: {
+          shared: diff.shared.length,
+          referenceOnly: diff.referenceOnly.length,
+          orthologOnly: diff.orthologOnly.length,
+        },
+      };
+
+      const positionText = (f: { start: number; end: number }) =>
+        `${f.start}${f.end !== f.start ? `–${f.end}` : ''}`;
+      const diffTooltip = (
+        entry: DiffEntry,
+        verdict: string,
+        counterpart: string
+      ) =>
+        `<h4>${escapeHtml(entry.type)}</h4><hr />${
+          entry.description
+            ? `<h5>Description</h5><p>${escapeHtml(entry.description)}</p>`
+            : ''
+        }<h5>Comparison</h5><p>${verdict}</p><p>${counterpart}</p>`;
+
+      const sharedData = diff.shared.map((entry) => ({
+        start: entry.start,
+        end: entry.end,
+        type: entry.type,
+        color: '#014371',
+        tooltipContent: diffTooltip(
+          entry,
+          `Present in <b>both</b> proteins.`,
+          `Here ${positionText(entry)} · ${escapeHtml(accession)} ${entry.counterpartStart}${
+            entry.counterpartEnd !== entry.counterpartStart
+              ? `–${entry.counterpartEnd}`
+              : ''
+          }`
+        ),
+      }));
+      const referenceOnlyData = diff.referenceOnly.map((entry) => ({
+        start: entry.start,
+        end: entry.end,
+        type: entry.type,
+        color: '#a65708',
+        tooltipContent: diffTooltip(
+          entry,
+          `Only annotated on <b>this protein</b> — no matching ${escapeHtml(entry.type)} in ${escapeHtml(accession)} near the aligned position.`,
+          `Here ${positionText(entry)}`
+        ),
+      }));
+      const orthologOnlyData = diff.orthologOnly.map((entry) => ({
+        start: entry.start,
+        end: entry.end,
+        type: entry.type,
+        color: '#578e21',
+        tooltipContent: diffTooltip(
+          entry,
+          `Only annotated on <b>${escapeHtml(organism)}</b> — not on this protein.`,
+          `${escapeHtml(accession)} ${entry.counterpartStart}${
+            entry.counterpartEnd !== entry.counterpartStart
+              ? `–${entry.counterpartEnd}`
+              : ''
+          } → here ${positionText(entry)}`
+        ),
+      }));
 
       const categoryName = ProtvistaUniprot.COMPARISON_CATEGORY;
       if (
         this.config &&
         !this.config.categories.some((c) => c.name === categoryName)
       ) {
+        // Appended, not unshifted: inserting at the front makes lit reuse
+        // every existing category element positionally, leaving stale data
+        // in recycled tracks. Visibility is handled by auto-expanding and
+        // scrolling the section into view instead.
         this.config.categories.push({
           name: categoryName,
           label: `Ortholog: ${accession}`,
@@ -1535,10 +1699,24 @@ class ProtvistaUniprot extends LitElement {
               data: [{ url: '' }],
             },
             {
-              name: 'ortholog_features',
-              label: `${organism} features`,
+              name: 'shared',
+              label: `Shared (${sharedData.length})`,
               trackType: 'nightingale-track-canvas',
-              tooltip: `Features of ${accession} projected onto this protein through the pairwise alignment.`,
+              tooltip: `Annotations present on BOTH proteins at aligned positions (PTMs, sites, motifs...).`,
+              data: [{ url: '' }],
+            },
+            {
+              name: 'reference_only',
+              label: `Only ${this.accession} (${referenceOnlyData.length})`,
+              trackType: 'nightingale-track-canvas',
+              tooltip: `Annotations of this protein with no counterpart in ${accession} at the aligned position.`,
+              data: [{ url: '' }],
+            },
+            {
+              name: 'ortholog_only',
+              label: `Only ${organism} (${orthologOnlyData.length})`,
+              trackType: 'nightingale-track-canvas',
+              tooltip: `Annotations of ${accession} with no counterpart on this protein, shown at their aligned positions here.`,
               data: [{ url: '' }],
             },
           ],
@@ -1546,7 +1724,25 @@ class ProtvistaUniprot extends LitElement {
       }
       this.data[categoryName] = conservation as never;
       this.data[`${categoryName}-conservation`] = conservation as never;
-      this.data[`${categoryName}-ortholog_features`] = projected as never;
+      this.data[`${categoryName}-shared`] = sharedData as never;
+      this.data[`${categoryName}-reference_only`] = referenceOnlyData as never;
+      this.data[`${categoryName}-ortholog_only`] = orthologOnlyData as never;
+      // Auto-expand: the whole point is seeing the per-annotation verdicts
+      this.everOpenedCategories.add(categoryName);
+      if (!this.openCategories.includes(categoryName)) {
+        this.openCategories = [...this.openCategories, categoryName];
+      }
+      if (this.isConnected) {
+        this.requestUpdate();
+        await this.updateComplete;
+        // Push the data into the freshly mounted tracks directly: the lazy
+        // visibility-based assignment would leave them blank until the user
+        // happens to scroll past, which reads as "nothing happened"
+        this._syncComparisonTrackData();
+        this.querySelector(
+          `.category-label[data-category-toggle="${categoryName}"]`
+        )?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     } catch (error) {
       this._comparison = undefined;
       this._comparisonError =
@@ -1554,6 +1750,26 @@ class ProtvistaUniprot extends LitElement {
     }
     this._comparisonLoading = false;
     this.requestUpdate();
+  }
+
+  _syncComparisonTrackData() {
+    const categoryName = ProtvistaUniprot.COMPARISON_CATEGORY;
+    for (const key of [
+      categoryName,
+      `${categoryName}-conservation`,
+      `${categoryName}-shared`,
+      `${categoryName}-reference_only`,
+      `${categoryName}-ortholog_only`,
+    ]) {
+      const data = this.data[key];
+      const element: NightingaleTrackCanvas | null = this.querySelector(
+        `#${CSS.escape(`track-${key}`)}`
+      );
+      if (!element || data === undefined) continue;
+      this._assignedTrackData.set(element, data);
+      this._pendingTrackData.delete(element);
+      element.data = data as NightingaleTrackCanvas['data'];
+    }
   }
 
   _clearComparison(rerender = true) {
@@ -1565,7 +1781,13 @@ class ProtvistaUniprot extends LitElement {
     }
     delete this.data[categoryName];
     delete this.data[`${categoryName}-conservation`];
-    delete this.data[`${categoryName}-ortholog_features`];
+    delete this.data[`${categoryName}-shared`];
+    delete this.data[`${categoryName}-reference_only`];
+    delete this.data[`${categoryName}-ortholog_only`];
+    this.openCategories = this.openCategories.filter(
+      (name) => name !== categoryName
+    );
+    this.everOpenedCategories.delete(categoryName);
     this._comparison = undefined;
     this._comparisonError = undefined;
     this._comparisonLoading = false;
@@ -1869,7 +2091,11 @@ class ProtvistaUniprot extends LitElement {
                   Comparing with
                   <b>${this._comparison.organism}</b>
                   (${this._comparison.accession}) ·
-                  ${Math.round(this._comparison.identity * 100)}% identical
+                  ${Math.round(this._comparison.identity * 100)}% identical ·
+                  ${this._comparison.diffCounts.shared} shared annotations,
+                  ${this._comparison.diffCounts.referenceOnly} only here,
+                  ${this._comparison.diffCounts.orthologOnly} only in
+                  ${this._comparison.organism}
                 </span>
                 <button type="button" @click="${() => this._clearComparison()}">
                   Clear
