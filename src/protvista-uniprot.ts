@@ -55,6 +55,14 @@ import {
   clampWindow,
   GnCoordinate,
 } from './utils/coordinate-navigation';
+import {
+  parseAlphaFoldPdb,
+  buildResidueDossier,
+  dossierToText,
+  plddtBucket,
+  CoordinateMap,
+  ResidueDossier,
+} from './utils/residue-dossier';
 import { buildHighlight } from './utils/structure-highlight';
 import {
   buildRegionChunks,
@@ -304,6 +312,10 @@ class ProtvistaUniprot extends LitElement {
     y: number;
   } = { visible: false, title: '', content: '', x: 0, y: 0 };
   private gotoError?: string;
+  private _dossier?: ResidueDossier;
+  private _dossierLoading = false;
+  private _lastClickedPosition?: number;
+  private _afCoordsPromise?: Promise<CoordinateMap | undefined>;
   // Bumped on every reset (accession change): async work captured under an
   // older generation must not write into the fresh state
   private _loadGeneration = 0;
@@ -1126,6 +1138,10 @@ class ProtvistaUniprot extends LitElement {
     this.displayCoordinates = {};
     this.gotoError = undefined;
     this._genomicCoordinates = undefined;
+    this._dossier = undefined;
+    this._dossierLoading = false;
+    this._lastClickedPosition = undefined;
+    this._afCoordsPromise = undefined;
     this._fetchFractions.clear();
     this._fetchDone = 0;
     this._fetchTotal = 0;
@@ -1341,6 +1357,10 @@ class ProtvistaUniprot extends LitElement {
       return;
     }
     const [pageX, pageY] = e.detail?.coords || [0, 0];
+    const clickedStart = Math.trunc(Number(feature.start));
+    if (Number.isFinite(clickedStart) && clickedStart >= 1) {
+      this._lastClickedPosition = clickedStart;
+    }
     this.tooltip = {
       visible: true,
       title: `${feature.type || ''} ${feature.start || ''}-${feature.end || ''}`,
@@ -1372,6 +1392,94 @@ class ProtvistaUniprot extends LitElement {
     if (overBottom > 0) {
       el.style.top = `${Math.max(8, rect.top - overBottom)}px`;
     }
+  }
+
+  _loadAlphaFoldCoords(): Promise<CoordinateMap | undefined> {
+    if (!this._afCoordsPromise) {
+      this._afCoordsPromise = (async () => {
+        const candidates: string[] = [];
+        try {
+          // The prediction API knows the current model file version -
+          // never hardcode it (v4 vs v6 already differ across releases)
+          const prediction = await fetch(
+            `https://alphafold.ebi.ac.uk/api/prediction/${this.accession}`,
+            { headers: { Accept: 'application/json' } }
+          );
+          if (prediction.ok) {
+            const entries = (await prediction.json()) as { pdbUrl?: string }[];
+            if (entries?.[0]?.pdbUrl) candidates.push(entries[0].pdbUrl);
+          }
+        } catch {
+          // fall through to version probing
+        }
+        // Fallback: the file host is more permissive than the API; probe
+        // recent model versions directly
+        for (const version of [6, 7, 5, 4]) {
+          candidates.push(
+            `https://alphafold.ebi.ac.uk/files/AF-${this.accession}-F1-model_v${version}.pdb`
+          );
+        }
+        for (const url of candidates) {
+          try {
+            const response = await fetch(url);
+            if (!response.ok) continue;
+            return parseAlphaFoldPdb(await response.text());
+          } catch {
+            // try the next candidate
+          }
+        }
+        // No model at all (e.g. TITIN-length proteins) - the spatial
+        // section is reported as unavailable
+        return undefined;
+      })();
+    }
+    return this._afCoordsPromise;
+  }
+
+  async showResidueDossier(position: number) {
+    this._dossierLoading = true;
+    this._dossier = undefined;
+    this._hideTooltip();
+    this.requestUpdate();
+    const coords = await this._loadAlphaFoldCoords();
+    this._dossier = buildResidueDossier({
+      position,
+      sequence: this.sequence,
+      data: this.data as Record<string, unknown>,
+      variants: this.transformedVariants?.variants,
+      coords,
+    });
+    this._dossierLoading = false;
+    this.requestUpdate();
+  }
+
+  _closeDossier() {
+    this._dossier = undefined;
+    this._dossierLoading = false;
+    this.requestUpdate();
+  }
+
+  _copyDossier() {
+    if (!this._dossier) return;
+    navigator.clipboard
+      ?.writeText(dossierToText(this.accession ?? '', this._dossier))
+      .catch(() => {});
+  }
+
+  /** Highlight the queried residue and a spatial neighbour together */
+  _highlightDossierPair(target: number) {
+    const position = this._dossier?.position;
+    if (!position) return;
+    this._clickedFeatureHighlight = `${position}:${position},${target}:${target}`;
+    const emitter = this.querySelector('nightingale-navigation');
+    emitter?.dispatchEvent(
+      new CustomEvent('change', {
+        detail: { highlight: this._clickedFeatureHighlight },
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    this.requestUpdate();
   }
 
   _hideTooltip() {
@@ -1760,6 +1868,142 @@ class ProtvistaUniprot extends LitElement {
                 <div class="protvista-uniprot-tooltip-body">
                   ${unsafeHTML(this.tooltip.content)}
                 </div>
+                ${this._lastClickedPosition
+                  ? html`<div class="protvista-uniprot-tooltip-actions">
+                      <button
+                        type="button"
+                        @click="${() =>
+                          this.showResidueDossier(
+                            this._lastClickedPosition as number
+                          )}"
+                      >
+                        Position report (${this._lastClickedPosition})
+                      </button>
+                    </div>`
+                  : ''}
+              </div>
+            `
+          : ''}
+        ${this._dossierLoading || this._dossier
+          ? html`
+              <div
+                class="protvista-dossier"
+                role="dialog"
+                aria-label="Residue report"
+              >
+                <div class="protvista-dossier__header">
+                  <strong>
+                    ${this._dossier
+                      ? html`Residue
+                        ${this._dossier.aminoAcid}${this._dossier.position}`
+                      : 'Residue report'}
+                  </strong>
+                  ${this._dossier?.plddt !== undefined
+                    ? html`<span
+                        class="protvista-dossier__plddt"
+                        title="AlphaFold per-residue confidence (pLDDT)"
+                        >pLDDT ${this._dossier.plddt} ·
+                        ${plddtBucket(this._dossier.plddt)}</span
+                      >`
+                    : ''}
+                  <button
+                    type="button"
+                    aria-label="Close report"
+                    @click="${this._closeDossier}"
+                  >
+                    ×
+                  </button>
+                </div>
+                ${this._dossierLoading
+                  ? html`<p class="protvista-dossier__muted">
+                      Computing spatial context…
+                    </p>`
+                  : html`
+                      ${this._dossier?.containing.length
+                        ? html`<h5>Located in</h5>
+                            <ul>
+                              ${this._dossier.containing.map(
+                                (f) =>
+                                  html`<li>
+                                    ${f.type}${f.description
+                                      ? html` ·
+                                          <span title="${f.description}"
+                                            >${f.description.length > 60
+                                              ? `${f.description.slice(0, 57)}…`
+                                              : f.description}</span
+                                          >`
+                                      : ''}
+                                    <span class="protvista-dossier__muted"
+                                      >${f.start}–${f.end}</span
+                                    >
+                                  </li>`
+                              )}
+                            </ul>`
+                        : ''}
+                      ${this._dossier?.neighbours.length
+                        ? html`<h5>
+                              Spatially close
+                              <span class="protvista-dossier__muted"
+                                >(Cα distances, AlphaFold model)</span
+                              >
+                            </h5>
+                            <ul>
+                              ${this._dossier.neighbours.map(
+                                (n) =>
+                                  html`<li
+                                    class="protvista-dossier__row"
+                                    title="Click to highlight both residues; confidence: ${n.confidence}"
+                                    @click="${() =>
+                                      this._highlightDossierPair(
+                                        n.targetResidue
+                                      )}"
+                                  >
+                                    <b>${n.distance} Å</b> ${n.feature.type}
+                                    ${n.feature.description
+                                      ? html`· ${n.feature.description}`
+                                      : ''}
+                                    <span class="protvista-dossier__muted"
+                                      >at ${n.targetResidue}</span
+                                    >
+                                    ${n.spatialOnly
+                                      ? html`<em
+                                          class="protvista-dossier__badge"
+                                          >distal in sequence</em
+                                        >`
+                                      : ''}
+                                  </li>`
+                              )}
+                            </ul>`
+                        : this._dossier?.spatialUnavailable
+                          ? html`<p class="protvista-dossier__muted">
+                              Spatial context unavailable — no full-length
+                              AlphaFold model for this protein.
+                            </p>`
+                          : ''}
+                      ${this._dossier?.variants.length
+                        ? html`<h5>Variants at this position</h5>
+                            <p>
+                              ${this._dossier.variants
+                                .map((v) => v.change)
+                                .join(', ')}
+                            </p>`
+                        : ''}
+                      ${this._dossier?.coverage
+                        ? html`<h5>MS detectability</h5>
+                            <p>
+                              Covered by ${this._dossier.coverage.all}
+                              peptide${this._dossier.coverage.all === 1
+                                ? ''
+                                : 's'}
+                              (${this._dossier.coverage.unique} unique)
+                            </p>`
+                        : ''}
+                      <div class="protvista-dossier__actions">
+                        <button type="button" @click="${this._copyDossier}">
+                          Copy as text
+                        </button>
+                      </div>
+                    `}
               </div>
             `
           : ''}
