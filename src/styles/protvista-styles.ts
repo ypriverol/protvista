@@ -262,8 +262,9 @@ export default css`
   }
 
   /* Line-graph hover readouts: halo for legibility over the tracks.
-     Collision separation is done in withHoverLabelCollisionFix (a static
-     CSS offset pushes the label outside the 40px svg and clips it). */
+     Collision separation is done in separateHoverLabels (delegated from
+     the wrapper's mousemove handler): a static CSS offset would push the
+     label outside the 40px svg and clip it. */
   nightingale-linegraph-track .mouse-per-line text {
     paint-order: stroke;
     stroke: #fff;
