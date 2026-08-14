@@ -106,7 +106,7 @@ if (form) {
   );
 }
 await page.fill('#protvista-goto-input', '185V'); // residue 185 of P05067 is V
-await page.click('.protvista-goto button');
+await page.click('.protvista-goto button[type="submit"]');
 await page.waitForTimeout(1500);
 const nav = await page.$('nightingale-navigation');
 {
@@ -119,7 +119,7 @@ const nav = await page.$('nightingale-navigation');
   );
 }
 await page.fill('#protvista-goto-input', '185W');
-await page.click('.protvista-goto button');
+await page.click('.protvista-goto button[type="submit"]');
 await page.waitForTimeout(600);
 const gotoError = await page
   .$eval('.protvista-goto__error', (el) => el.textContent)

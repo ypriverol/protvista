@@ -776,10 +776,14 @@ class ProtvistaUniprot extends LitElement {
     const displayStart = Number(navigation['display-start'] ?? 1);
     const displayEnd = Number(navigation['display-end'] ?? length);
     const scaleFactor = length / 5;
+    const span = displayEnd - displayStart;
     let k: number;
-    if (operation === 'zoom-in') k = scaleFactor;
+    // Cap the zoom-in step so '+' keeps working below length/5 instead of
+    // silently dying (uniprot.org's toolbar has this dead zone; capped
+    // here so the button stays useful down to the 29-residue letter view)
+    if (operation === 'zoom-in') k = Math.min(scaleFactor, span - 29);
     else if (operation === 'zoom-out') k = -scaleFactor;
-    else k = displayEnd - displayStart - 29;
+    else k = span - 29;
     const newEnd = displayEnd - k;
     let newStart = displayStart;
     if (newEnd > length) newStart -= newEnd - length;
