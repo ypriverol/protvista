@@ -62,6 +62,19 @@ type ProtvistaCategory = {
   label: string;
   trackType: TrackType;
   tracks: ProtvistaTrackConfig[];
+  /**
+   * Defer fetching this category's data until the user expands it when the
+   * protein is longer than this many residues (heavy payloads, e.g.
+   * variants for TITIN-class proteins).
+   */
+  lazyThreshold?: number;
+  /**
+   * When the protein is longer than this many residues, fetch this
+   * category's data automatically in residue windows of this size
+   * (Proteins API `location` filtering) and refresh summaries as chunks
+   * arrive, instead of one monolithic request.
+   */
+  regionChunkSize?: number;
   color?: string;
   shape?: string; //TODO: eventually replace with list
   scale?: string;
@@ -691,6 +704,7 @@ const config: ProtvistaConfig = {
     {
       name: 'VARIATION',
       label: 'Variants',
+      regionChunkSize: 4000,
       trackType: 'nightingale-linegraph-track',
       helpPage: 'variant_viewer',
       tracks: [

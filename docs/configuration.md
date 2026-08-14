@@ -110,6 +110,18 @@ Key points:
   different feature type.
 - Rendering options (`color`, `shape`, `scale`, `color-range`) can be set on
   a category (default for its tracks) or per track (override).
+- **`regionChunkSize`** (category-level): for proteins longer than this
+  many residues, the category's data is fetched automatically in residue
+  windows of this size (Proteins API `location` filtering) and summaries
+  refresh as chunks arrive. The built-in configuration uses it for
+  variants (`regionChunkSize: 4000`): TITIN's ~85MB of variation data
+  streams in nine parallel windows, with the counts graph appearing after
+  the first window instead of after the whole download.
+- **`lazyThreshold`** (category-level): defer fetching the category's data
+  until the user expands it when the protein is longer than this many
+  residues. Not used by the built-in configuration (region chunking is
+  preferred); available for integrators whose endpoints cannot filter by
+  location.
 
 ### Supported track types
 

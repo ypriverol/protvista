@@ -122,6 +122,14 @@ export default css`
     line-height: 1;
   }
 
+  .category-deferred-note {
+    font-size: 0.8rem;
+    font-style: italic;
+    color: #667;
+    align-self: center;
+    padding: 0.4rem 0.6rem;
+  }
+
   .protvista-goto {
     display: flex;
     flex-direction: column;
