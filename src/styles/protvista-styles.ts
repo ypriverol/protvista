@@ -140,6 +140,37 @@ export default css`
     text-align: center;
   }
 
+  .protvista-zoom-tool {
+    display: inline-flex;
+    gap: 0.2rem;
+    margin-right: 0.6rem;
+  }
+
+  .protvista-zoom-tool button {
+    min-width: 1.9rem;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid var(--protvista-track-background);
+    border-radius: 3px;
+    background: #fff;
+    color: var(--protvista-link-color);
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .protvista-zoom-tool button:hover {
+    background: var(--protvista-hover-background);
+  }
+
+  /* Match uniprot.org's structure pane: the site hides Mol*'s floating
+     viewport controls for a clean canvas (app.scss on uniprot-website) */
+  .protvista-uniprot-structure__structure nightingale-structure {
+    z-index: 10;
+  }
+
+  .protvista-uniprot-structure__structure .msp-viewport-controls {
+    display: none;
+  }
+
   .protvista-goto__row {
     display: flex;
     align-items: center;
