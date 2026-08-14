@@ -226,6 +226,8 @@ export type ResidueDossier = {
   variants: { change: string; description?: string }[];
   coverage?: { all: number; unique: number };
   spatialUnavailable?: boolean;
+  /** Conservation line when an ortholog comparison is active */
+  orthologNote?: string;
 };
 
 export const buildResidueDossier = (options: {
@@ -318,6 +320,9 @@ export const dossierToText = (
     lines.push(
       `Variants at this position: ${dossier.variants.map((v) => v.change).join(', ')}`
     );
+  }
+  if (dossier.orthologNote) {
+    lines.push(`Ortholog: ${dossier.orthologNote}`);
   }
   if (dossier.coverage) {
     lines.push(

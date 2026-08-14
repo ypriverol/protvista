@@ -63,6 +63,13 @@ import {
   CoordinateMap,
   ResidueDossier,
 } from './utils/residue-dossier';
+import {
+  alignSequences,
+  conservationRuns,
+  projectToReference,
+  ConservationStatus,
+} from './utils/alignment';
+import { escapeHtml } from './utils/security';
 import { buildHighlight } from './utils/structure-highlight';
 import {
   buildRegionChunks,
@@ -316,6 +323,23 @@ class ProtvistaUniprot extends LitElement {
   private _dossierLoading = false;
   private _lastClickedPosition?: number;
   private _afCoordsPromise?: Promise<CoordinateMap | undefined>;
+  private _comparison?: {
+    accession: string;
+    organism: string;
+    identity: number;
+    mapping: Int32Array;
+    status: ConservationStatus[];
+    orthologSequence: string;
+  };
+  private _comparisonLoading = false;
+  private _comparisonError?: string;
+  // UniProt-precomputed ortholog candidates (UniRef50 cluster members)
+  private _orthologOptions?: {
+    accession: string;
+    organism: string;
+    length: number;
+  }[];
+  private _orthologOptionsLoading = false;
   // Bumped on every reset (accession change): async work captured under an
   // older generation must not write into the fresh state
   private _loadGeneration = 0;
@@ -1142,6 +1166,7 @@ class ProtvistaUniprot extends LitElement {
     this._dossierLoading = false;
     this._lastClickedPosition = undefined;
     this._afCoordsPromise = undefined;
+    this._clearComparison(false);
     this._fetchFractions.clear();
     this._fetchDone = 0;
     this._fetchTotal = 0;
@@ -1394,6 +1419,209 @@ class ProtvistaUniprot extends LitElement {
     }
   }
 
+  /**
+   * Runtime-only category injected when an ortholog comparison is active:
+   * a conservation band plus the ortholog's features projected onto
+   * reference coordinates through the alignment. Never fetched by
+   * _loadData (guarded by name) and not part of the public config
+   * contract.
+   */
+  static COMPARISON_CATEGORY = 'ORTHOLOG_COMPARISON';
+
+  async _startComparison(rawAccession: string) {
+    const accession = rawAccession.trim().toUpperCase();
+    if (!accession || !this.sequence) return;
+    this._comparisonLoading = true;
+    this._comparisonError = undefined;
+    this.requestUpdate();
+    try {
+      const [entryResponse, featuresResponse] = await Promise.all([
+        fetch(`https://www.ebi.ac.uk/proteins/api/proteins/${accession}`, {
+          headers: { Accept: 'application/json' },
+        }),
+        fetch(`https://www.ebi.ac.uk/proteins/api/features/${accession}`, {
+          headers: { Accept: 'application/json' },
+        }),
+      ]);
+      if (!entryResponse.ok) {
+        throw new Error(
+          `Couldn't load ${accession} (HTTP ${entryResponse.status})`
+        );
+      }
+      const entry = (await entryResponse.json()) as {
+        sequence?: { sequence?: string };
+        organism?: { names?: { type?: string; value?: string }[] };
+      };
+      const orthologSequence = entry.sequence?.sequence;
+      if (!orthologSequence) throw new Error(`No sequence for ${accession}`);
+      const organism =
+        entry.organism?.names?.find((n) => n.type === 'scientific')?.value ??
+        accession;
+
+      const alignment = alignSequences(this.sequence, orthologSequence);
+      this._comparison = {
+        accession,
+        organism,
+        identity: alignment.identity,
+        mapping: alignment.mapping,
+        status: alignment.status,
+        orthologSequence,
+      };
+
+      // Conservation band: contiguous runs of alignment status
+      const STATUS_COLORS: Record<ConservationStatus, string> = {
+        identical: '#014371',
+        similar: '#b8ce48',
+        different: '#a65708',
+        gap: '#d2dce3',
+      };
+      const conservation = conservationRuns(alignment.status).map((run) => ({
+        start: run.start,
+        end: run.end,
+        type: 'CONSERVATION',
+        color: STATUS_COLORS[run.status],
+        tooltipContent: `<h5>${escapeHtml(run.status)}</h5><p>${run.start}–${run.end} vs ${escapeHtml(accession)}</p>`,
+      }));
+
+      // Ortholog features projected through the alignment
+      const projected: Record<string, unknown>[] = [];
+      if (featuresResponse.ok) {
+        const featurePayload = (await featuresResponse.json()) as {
+          features?: {
+            type?: string;
+            begin?: string;
+            end?: string;
+            description?: string;
+          }[];
+        };
+        for (const feature of (featurePayload.features ?? []).slice(0, 800)) {
+          const begin = Math.trunc(Number(feature.begin));
+          const end = Math.trunc(Number(feature.end ?? begin));
+          if (!Number.isFinite(begin) || begin < 1 || !feature.type) continue;
+          const target = projectToReference(
+            alignment.mapping,
+            begin,
+            Math.max(begin, end)
+          );
+          if (!target) continue; // absent from the reference
+          projected.push({
+            start: target.start,
+            end: target.end,
+            type: feature.type,
+            tooltipContent: `<h4>${escapeHtml(feature.type)} (${escapeHtml(organism)})</h4><hr />${
+              feature.description
+                ? `<h5>Description</h5><p>${escapeHtml(feature.description)}</p>`
+                : ''
+            }<h5>Ortholog position</h5><p>${escapeHtml(accession)} ${begin}${end !== begin ? `–${end}` : ''} → here ${target.start}${target.end !== target.start ? `–${target.end}` : ''}</p>`,
+          });
+        }
+      }
+
+      const categoryName = ProtvistaUniprot.COMPARISON_CATEGORY;
+      if (
+        this.config &&
+        !this.config.categories.some((c) => c.name === categoryName)
+      ) {
+        this.config.categories.push({
+          name: categoryName,
+          label: `Ortholog: ${accession}`,
+          trackType: 'nightingale-track-canvas',
+          tracks: [
+            {
+              name: 'conservation',
+              label: 'Conservation',
+              trackType: 'nightingale-track-canvas',
+              tooltip: `Per-residue alignment status vs ${accession} (${organism}): identical, similar, different, or unaligned.`,
+              data: [{ url: '' }],
+            },
+            {
+              name: 'ortholog_features',
+              label: `${organism} features`,
+              trackType: 'nightingale-track-canvas',
+              tooltip: `Features of ${accession} projected onto this protein through the pairwise alignment.`,
+              data: [{ url: '' }],
+            },
+          ],
+        });
+      }
+      this.data[categoryName] = conservation as never;
+      this.data[`${categoryName}-conservation`] = conservation as never;
+      this.data[`${categoryName}-ortholog_features`] = projected as never;
+    } catch (error) {
+      this._comparison = undefined;
+      this._comparisonError =
+        error instanceof Error ? error.message : 'Comparison failed';
+    }
+    this._comparisonLoading = false;
+    this.requestUpdate();
+  }
+
+  _clearComparison(rerender = true) {
+    const categoryName = ProtvistaUniprot.COMPARISON_CATEGORY;
+    if (this.config) {
+      this.config.categories = this.config.categories.filter(
+        (c) => c.name !== categoryName
+      );
+    }
+    delete this.data[categoryName];
+    delete this.data[`${categoryName}-conservation`];
+    delete this.data[`${categoryName}-ortholog_features`];
+    this._comparison = undefined;
+    this._comparisonError = undefined;
+    this._comparisonLoading = false;
+    if (rerender) this.requestUpdate();
+  }
+
+  /**
+   * Ortholog candidates come from UniProt's precomputed UniRef50 cluster
+   * for this protein - the user picks from what UniProt already grouped,
+   * no free-text accessions.
+   */
+  async _loadOrthologOptions() {
+    if (this._orthologOptions || this._orthologOptionsLoading) return;
+    this._orthologOptionsLoading = true;
+    this.requestUpdate();
+    try {
+      const clusterResponse = await fetch(
+        `https://rest.uniprot.org/uniref/search?query=uniprot_id:${this.accession}+AND+identity:0.5&fields=id`,
+        { headers: { Accept: 'application/json' } }
+      );
+      const cluster = (await clusterResponse.json()) as {
+        results?: { id?: string }[];
+      };
+      const clusterId = cluster.results?.[0]?.id;
+      if (!clusterId) throw new Error('No UniRef cluster found');
+      const membersResponse = await fetch(
+        `https://rest.uniprot.org/uniref/${clusterId}/members?size=30&facetFilter=member_id_type:uniprotkb_id`,
+        { headers: { Accept: 'application/json' } }
+      );
+      const members = (await membersResponse.json()) as {
+        results?: {
+          accessions?: string[];
+          organismName?: string;
+          sequenceLength?: number;
+        }[];
+      };
+      this._orthologOptions = (members.results ?? [])
+        .map((m) => ({
+          accession: m.accessions?.[0] ?? '',
+          organism: m.organismName ?? '',
+          length: m.sequenceLength ?? 0,
+        }))
+        .filter((m) => m.accession && m.accession !== this.accession);
+    } catch (error) {
+      this._comparisonError =
+        error instanceof Error ? error.message : 'Ortholog lookup failed';
+    }
+    this._orthologOptionsLoading = false;
+    this.requestUpdate();
+  }
+
+  _handleOrthologPick(e: Event) {
+    const accession = (e.target as HTMLSelectElement).value;
+    if (accession) this._startComparison(accession);
+  }
+
   _loadAlphaFoldCoords(): Promise<CoordinateMap | undefined> {
     if (!this._afCoordsPromise) {
       this._afCoordsPromise = (async () => {
@@ -1449,6 +1677,18 @@ class ProtvistaUniprot extends LitElement {
       variants: this.transformedVariants?.variants,
       coords,
     });
+    if (this._comparison) {
+      const mapped = this._comparison.mapping[position] ?? 0;
+      const status = this._comparison.status[position];
+      const orthologResidue =
+        mapped > 0
+          ? this._comparison.orthologSequence.charAt(mapped - 1)
+          : undefined;
+      this._dossier.orthologNote =
+        mapped > 0
+          ? `${this._comparison.organism} (${this._comparison.accession}): ${status} — ${orthologResidue}${mapped}`
+          : `${this._comparison.organism} (${this._comparison.accession}): not aligned at this position`;
+    }
     this._dossierLoading = false;
     this.requestUpdate();
   }
@@ -1623,6 +1863,52 @@ class ProtvistaUniprot extends LitElement {
               <code>185S</code> · genomic position
               <code>g:21:25897620</code></span
             >`}
+        <div class="protvista-compare">
+          ${this._comparison
+            ? html`<span>
+                  Comparing with
+                  <b>${this._comparison.organism}</b>
+                  (${this._comparison.accession}) ·
+                  ${Math.round(this._comparison.identity * 100)}% identical
+                </span>
+                <button type="button" @click="${() => this._clearComparison()}">
+                  Clear
+                </button>`
+            : this._orthologOptions
+              ? html`<label for="protvista-ortholog-select"
+                    >Compare with ortholog</label
+                  >
+                  <select
+                    id="protvista-ortholog-select"
+                    @change="${this._handleOrthologPick}"
+                  >
+                    <option value="">
+                      choose (${this._orthologOptions.length} in UniRef50)
+                    </option>
+                    ${this._orthologOptions.map(
+                      (o) =>
+                        html`<option value="${o.accession}">
+                          ${o.organism} — ${o.accession} (${o.length} aa)
+                        </option>`
+                    )}
+                  </select>
+                  ${this._comparisonLoading
+                    ? html`<span class="protvista-goto__hint">aligning…</span>`
+                    : ''}`
+              : html`<button
+                  type="button"
+                  @click="${() => this._loadOrthologOptions()}"
+                >
+                  ${this._orthologOptionsLoading
+                    ? 'Loading orthologs…'
+                    : 'Compare with ortholog'}
+                </button>`}
+          ${this._comparisonError
+            ? html`<span class="protvista-goto__error" role="alert"
+                >${this._comparisonError}</span
+              >`
+            : ''}
+        </div>
       </form>
       <nightingale-manager
         reflected-attributes="length display-start display-end highlight activefilters filters"
@@ -1987,6 +2273,10 @@ class ProtvistaUniprot extends LitElement {
                                 .map((v) => v.change)
                                 .join(', ')}
                             </p>`
+                        : ''}
+                      ${this._dossier?.orthologNote
+                        ? html`<h5>Conservation</h5>
+                            <p>${this._dossier.orthologNote}</p>`
                         : ''}
                       ${this._dossier?.coverage
                         ? html`<h5>MS detectability</h5>

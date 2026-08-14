@@ -332,6 +332,27 @@ export default css`
     cursor: pointer;
   }
 
+  .protvista-compare {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+  }
+
+  .protvista-compare select,
+  .protvista-compare button {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--protvista-track-background);
+    border-radius: 3px;
+    background: #fff;
+    color: var(--protvista-link-color);
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+
   .category-label {
     background-color: var(--protvista-category-background);
     color: var(--protvista-category-color);
