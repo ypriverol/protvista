@@ -34,7 +34,7 @@ export const getFilteredVariants = (
     );
     return {
       ...variant,
-      variants: [...matchingVariants],
+      variants: matchingVariants,
     };
   });
 

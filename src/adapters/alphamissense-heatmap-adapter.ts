@@ -31,7 +31,6 @@ const parseCSV = (rawText: string): HeatmapRow[] => {
   return data;
 };
 
-// Load and parse
 const loadAndParseAnnotations = async (
   url: string
 ): Promise<HeatmapRow[] | undefined> => {

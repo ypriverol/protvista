@@ -660,9 +660,6 @@ class ProtvistaUniprotStructure extends LitElement {
       this.checksum
     );
 
-    // TODO: return if no data at all
-    // if (!payload) return;
-
     const data = [...pdbData, ...afData, ...beaconsData];
 
     this.data = data;

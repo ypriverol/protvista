@@ -11,7 +11,6 @@ import {
   getCellStringValue,
   computeFilteredData,
   computeUniqueValuesByKey,
-  findRowFromEvent,
   safeDisplayValue,
   type FilterableColumn,
 } from '../protvista-uniprot-datatable';
@@ -165,50 +164,6 @@ describe('protvista-uniprot-datatable utils', () => {
       expect(safeDisplayValue('x')).toBe('x');
       expect(safeDisplayValue(42)).toBe('42');
       expect(safeDisplayValue(false)).toBe('false');
-    });
-  });
-
-  describe('findRowFromEvent', () => {
-    class MockHTMLTableRowElement {
-      dataset: Record<string, string> = {};
-    }
-
-    // @ts-expect-error - assign for test env
-    global.HTMLTableRowElement = MockHTMLTableRowElement;
-
-    it('returns matching row based on tr[data-id]', () => {
-      const mock = new MockHTMLTableRowElement();
-      mock.dataset = { id: '2' };
-      const tr = mock as unknown as HTMLTableRowElement;
-
-      const e = {
-        composedPath: () => [tr],
-      } as unknown as Event;
-
-      const out = findRowFromEvent(e, data, 'id');
-      expect(out).toEqual({ id: '2', row: data[1] });
-    });
-
-    it('returns an id with undefined row when the id is not found in filteredData', () => {
-      const mock = new MockHTMLTableRowElement();
-      mock.dataset = { id: '999' };
-      const tr = mock as unknown as HTMLTableRowElement;
-
-      const e = {
-        composedPath: () => [tr],
-      } as unknown as Event;
-
-      const out = findRowFromEvent(e, data, 'id');
-      expect(out).toEqual({ id: '999', row: undefined });
-    });
-
-    it('returns null if no tr[data-id] is found in the composedPath', () => {
-      const e = {
-        composedPath: () => [{}, { foo: 'bar' }],
-      } as unknown as Event;
-
-      const out = findRowFromEvent(e, data, 'id');
-      expect(out).toBeNull();
     });
   });
 });

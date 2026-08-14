@@ -73,22 +73,6 @@ export function computeUniqueValuesByKey<T extends Record<string, unknown>>(
   return result;
 }
 
-export function findRowFromEvent<T extends Record<string, unknown>>(
-  e: Event,
-  filteredData: ReadonlyArray<T>,
-  rowIdKey: keyof T | string
-): { id: string; row?: T } | null {
-  const tr = e.composedPath().find((n) => n instanceof HTMLTableRowElement) as
-    | HTMLTableRowElement
-    | undefined;
-
-  const id = tr?.dataset?.id;
-  if (!id) return null;
-
-  const row = filteredData.find((r) => getRowId(r, rowIdKey) === id);
-  return { id, row };
-}
-
 export function safeDisplayValue(val: unknown): string | typeof nothing {
   if (val == null) return nothing;
   if (typeof val === 'object') return nothing;

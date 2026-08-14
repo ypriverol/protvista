@@ -679,12 +679,11 @@ class ProtvistaUniprot extends LitElement {
         currentCategory?.name === 'ALPHAMISSENSE_PATHOGENICITY' &&
         currentCategory.tracks
       ) {
+        const heatmapComponent = this.querySelector<NightingaleSequenceHeatmap>(
+          'nightingale-sequence-heatmap'
+        );
         for (const track of currentCategory.tracks) {
           if (track.trackType === 'nightingale-sequence-heatmap') {
-            const heatmapComponent =
-              this.querySelector<NightingaleSequenceHeatmap>(
-                'nightingale-sequence-heatmap'
-              );
             if (heatmapComponent && this.sequence) {
               const heatmapData = this.data[`${id}-${track.name}`] as {
                 xValue: number;
@@ -1523,9 +1522,7 @@ class ProtvistaUniprot extends LitElement {
     } else {
       target.classList.remove('open');
       if (toggle) this._pendingCategoryOpens.delete(toggle);
-      this.openCategories = [...this.openCategories].filter(
-        (d) => d !== toggle
-      );
+      this.openCategories = this.openCategories.filter((d) => d !== toggle);
     }
   }
 
