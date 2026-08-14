@@ -42,15 +42,20 @@ Rendering cost is then bounded by pixels on screen, not by database growth.
    viewport (the `nightingale-scrollbox` pattern, upstream PR #311).
 5. **Reference-guarded assignment**: re-renders never re-feed unchanged
    data.
-6. **Raw payload release**: fetched JSON is dropped once transformed.
+6. **Raw payload release**: fetched JSON (and the resolved fetch
+   promises that would otherwise pin it) is dropped once transformed.
+7. **Region-chunked fetching** (`regionChunkSize`): heavy categories are
+   downloaded automatically in parallel residue windows via the Proteins
+   API `location` filter; summaries refresh at checkpoints as chunks
+   land, and the heavy detail canvas is fed once at completion.
 
 ## Next steps (in impact order)
 
-1. **Windowed detail fetching**: the Proteins API supports positional
-   filtering; when the visible window is a fraction of the sequence, fetch
-   variants/peptides for that window only. This eliminates the 85MB
-   download entirely — the summary track can be served by a (future)
-   pre-aggregated endpoint or computed once server-side.
+1. **Visible-window-only detail fetching**: region chunking (shipped, see
+   above) still downloads all windows; the next step is fetching only the
+   windows intersecting the visible range when zoomed in, which would
+   eliminate most of the 85MB for typical sessions — ideally paired with
+   a (future) pre-aggregated summary endpoint served once.
 2. **Zoom-threshold switching** (the IGV rule): below ~1px/residue, render
    only the summary even when expanded; swap in the detail track when the
    user zooms past the threshold. Per-residue letter tracks (colored
