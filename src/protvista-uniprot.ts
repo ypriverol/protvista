@@ -973,6 +973,8 @@ class ProtvistaUniprot extends LitElement {
   updated(changedProperties: Map<string, string>) {
     super.updated(changedProperties);
 
+    if (this.tooltip.visible) this._clampTooltipIntoViewport();
+
     // React to runtime accession changes (get() returns the previous value;
     // undefined means this is the initial set handled by connectedCallback)
     if (
@@ -1141,6 +1143,25 @@ class ProtvistaUniprot extends LitElement {
       y: pageY - window.scrollY,
     };
     this.requestUpdate();
+  }
+
+  /**
+   * The tooltip opens at the click coordinates; near the right/bottom
+   * viewport edges that puts part of it off-screen. Re-position after
+   * render so it always stays fully visible.
+   */
+  _clampTooltipIntoViewport() {
+    const el = this.querySelector<HTMLElement>('.protvista-uniprot-tooltip');
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const overRight = rect.right - (window.innerWidth - 8);
+    const overBottom = rect.bottom - (window.innerHeight - 8);
+    if (overRight > 0) {
+      el.style.left = `${Math.max(8, rect.left - overRight)}px`;
+    }
+    if (overBottom > 0) {
+      el.style.top = `${Math.max(8, rect.top - overBottom)}px`;
+    }
   }
 
   _hideTooltip() {
