@@ -337,9 +337,16 @@ class ProtvistaUniprot extends LitElement {
     status: ConservationStatus[];
     orthologSequence: string;
     diffCounts: { shared: number; referenceOnly: number; orthologOnly: number };
+    /** Fraction of the reference sequence with an aligned counterpart;
+     * identity is computed over aligned positions only, so low coverage
+     * must be disclosed or the identity number overstates similarity */
+    coverage: number;
   };
   private _comparisonLoading = false;
   private _comparisonError?: string;
+  /** Increments per _startComparison call so a slow earlier pick cannot
+   * overwrite the result of a later one (same accession generation) */
+  private _comparisonToken = 0;
   // UniProt-precomputed ortholog candidates (UniRef50 cluster members)
   private _orthologOptions?: {
     accession: string;
@@ -1471,6 +1478,14 @@ class ProtvistaUniprot extends LitElement {
     this._comparisonLoading = true;
     this._comparisonError = undefined;
     this.requestUpdate();
+    // Guard against accession switches while the comparison is in flight:
+    // a stale run must not write data aligned to the previous sequence.
+    // The token additionally covers re-picks within the same accession.
+    const generation = this._loadGeneration;
+    this._comparisonToken += 1;
+    const token = this._comparisonToken;
+    const stale = () =>
+      generation !== this._loadGeneration || token !== this._comparisonToken;
     try {
       const [entryResponse, featuresResponse, ptmResponse] = await Promise.all(
         [
@@ -1498,6 +1513,7 @@ class ProtvistaUniprot extends LitElement {
       };
       const orthologSequence = entry.sequence?.sequence;
       if (!orthologSequence) throw new Error(`No sequence for ${accession}`);
+      if (stale()) return;
       const organism =
         entry.organism?.names?.find((n) => n.type === 'scientific')?.value ??
         accession;
@@ -1602,6 +1618,7 @@ class ProtvistaUniprot extends LitElement {
         seenReference.add(key);
         return true;
       });
+      if (stale()) return;
       const diff = diffFeatures(
         dedupedReference,
         dedupedOrtholog,
@@ -1620,6 +1637,9 @@ class ProtvistaUniprot extends LitElement {
           referenceOnly: diff.referenceOnly.length,
           orthologOnly: diff.orthologOnly.length,
         },
+        coverage:
+          alignment.status.slice(1).filter((s) => s !== 'gap').length /
+          this.sequence.length,
       };
 
       const positionText = (f: { start: number; end: number }) =>
@@ -1686,6 +1706,13 @@ class ProtvistaUniprot extends LitElement {
         // every existing category element positionally, leaving stale data
         // in recycled tracks. Visibility is handled by auto-expanding and
         // scrolling the section into view instead.
+        // Cloned, not mutated: this.config may be the shared module-level
+        // default, and pushing into it would leak the synthetic category
+        // into every other viewer instance on the page.
+        this.config = {
+          ...this.config,
+          categories: [...this.config.categories],
+        };
         this.config.categories.push({
           name: categoryName,
           label: `Ortholog: ${accession}`,
@@ -1735,6 +1762,7 @@ class ProtvistaUniprot extends LitElement {
       if (this.isConnected) {
         this.requestUpdate();
         await this.updateComplete;
+        if (stale()) return;
         // Push the data into the freshly mounted tracks directly: the lazy
         // visibility-based assignment would leave them blank until the user
         // happens to scroll past, which reads as "nothing happened"
@@ -1744,10 +1772,12 @@ class ProtvistaUniprot extends LitElement {
         )?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     } catch (error) {
+      if (stale()) return;
       this._comparison = undefined;
       this._comparisonError =
         error instanceof Error ? error.message : 'Comparison failed';
     }
+    if (stale()) return;
     this._comparisonLoading = false;
     this.requestUpdate();
   }
@@ -1773,11 +1803,17 @@ class ProtvistaUniprot extends LitElement {
   }
 
   _clearComparison(rerender = true) {
+    // Invalidate any in-flight _startComparison so it cannot repopulate
+    // the state the user just cleared
+    this._comparisonToken += 1;
     const categoryName = ProtvistaUniprot.COMPARISON_CATEGORY;
-    if (this.config) {
-      this.config.categories = this.config.categories.filter(
-        (c) => c.name !== categoryName
-      );
+    if (this.config?.categories.some((c) => c.name === categoryName)) {
+      this.config = {
+        ...this.config,
+        categories: this.config.categories.filter(
+          (c) => c.name !== categoryName
+        ),
+      };
     }
     delete this.data[categoryName];
     delete this.data[`${categoryName}-conservation`];
@@ -1805,9 +1841,14 @@ class ProtvistaUniprot extends LitElement {
     this.requestUpdate();
     try {
       const clusterResponse = await fetch(
-        `https://rest.uniprot.org/uniref/search?query=uniprot_id:${this.accession}+AND+identity:0.5&fields=id`,
+        `https://rest.uniprot.org/uniref/search?query=uniprot_id:${encodeURIComponent(this.accession ?? '')}+AND+identity:0.5&fields=id`,
         { headers: { Accept: 'application/json' } }
       );
+      if (!clusterResponse.ok) {
+        throw new Error(
+          `Ortholog lookup failed (HTTP ${clusterResponse.status})`
+        );
+      }
       const cluster = (await clusterResponse.json()) as {
         results?: { id?: string }[];
       };
@@ -1817,6 +1858,11 @@ class ProtvistaUniprot extends LitElement {
         `https://rest.uniprot.org/uniref/${clusterId}/members?size=30&facetFilter=member_id_type:uniprotkb_id`,
         { headers: { Accept: 'application/json' } }
       );
+      if (!membersResponse.ok) {
+        throw new Error(
+          `Couldn't load ortholog list (HTTP ${membersResponse.status})`
+        );
+      }
       const members = (await membersResponse.json()) as {
         results?: {
           accessions?: string[];
@@ -1901,7 +1947,7 @@ class ProtvistaUniprot extends LitElement {
     });
     if (this._comparison) {
       const mapped = this._comparison.mapping[position] ?? 0;
-      const status = this._comparison.status[position];
+      const status = this._comparison.status[position] ?? 'gap';
       const orthologResidue =
         mapped > 0
           ? this._comparison.orthologSequence.charAt(mapped - 1)
@@ -2075,6 +2121,66 @@ class ProtvistaUniprot extends LitElement {
             placeholder="e.g. 188-198"
           />
           <button type="submit">Go</button>
+          <div class="protvista-compare">
+            ${this._comparison
+              ? html`<span>
+                    Comparing with
+                    <b>${this._comparison.organism}</b>
+                    (${this._comparison.accession}) ·
+                    ${Math.round(this._comparison.identity * 100)}% identical
+                    ${this._comparison.coverage < 0.8
+                      ? html`(over
+                        ${Math.round(this._comparison.coverage * 100)}% of this
+                        sequence)`
+                      : nothing}
+                    · ${this._comparison.diffCounts.shared} shared annotations,
+                    ${this._comparison.diffCounts.referenceOnly} only here,
+                    ${this._comparison.diffCounts.orthologOnly} only in
+                    ${this._comparison.organism}
+                  </span>
+                  <button
+                    type="button"
+                    @click="${() => this._clearComparison()}"
+                  >
+                    Clear
+                  </button>`
+              : this._orthologOptions
+                ? html`<label for="protvista-ortholog-select"
+                      >Compare with ortholog</label
+                    >
+                    <select
+                      id="protvista-ortholog-select"
+                      @change="${this._handleOrthologPick}"
+                    >
+                      <option value="">
+                        choose (${this._orthologOptions.length} in UniRef50)
+                      </option>
+                      ${this._orthologOptions.map(
+                        (o) =>
+                          html`<option value="${o.accession}">
+                            ${o.organism} — ${o.accession} (${o.length} aa)
+                          </option>`
+                      )}
+                    </select>
+                    ${this._comparisonLoading
+                      ? html`<span class="protvista-goto__hint"
+                          >aligning…</span
+                        >`
+                      : ''}`
+                : html`<button
+                    type="button"
+                    @click="${() => this._loadOrthologOptions()}"
+                  >
+                    ${this._orthologOptionsLoading
+                      ? 'Loading orthologs…'
+                      : 'Compare with ortholog'}
+                  </button>`}
+            ${this._comparisonError
+              ? html`<span class="protvista-goto__error" role="alert"
+                  >${this._comparisonError}</span
+                >`
+              : ''}
+          </div>
         </div>
         ${this.gotoError
           ? html`<span class="protvista-goto__error" role="alert"
@@ -2085,56 +2191,6 @@ class ProtvistaUniprot extends LitElement {
               <code>185S</code> · genomic position
               <code>g:21:25897620</code></span
             >`}
-        <div class="protvista-compare">
-          ${this._comparison
-            ? html`<span>
-                  Comparing with
-                  <b>${this._comparison.organism}</b>
-                  (${this._comparison.accession}) ·
-                  ${Math.round(this._comparison.identity * 100)}% identical ·
-                  ${this._comparison.diffCounts.shared} shared annotations,
-                  ${this._comparison.diffCounts.referenceOnly} only here,
-                  ${this._comparison.diffCounts.orthologOnly} only in
-                  ${this._comparison.organism}
-                </span>
-                <button type="button" @click="${() => this._clearComparison()}">
-                  Clear
-                </button>`
-            : this._orthologOptions
-              ? html`<label for="protvista-ortholog-select"
-                    >Compare with ortholog</label
-                  >
-                  <select
-                    id="protvista-ortholog-select"
-                    @change="${this._handleOrthologPick}"
-                  >
-                    <option value="">
-                      choose (${this._orthologOptions.length} in UniRef50)
-                    </option>
-                    ${this._orthologOptions.map(
-                      (o) =>
-                        html`<option value="${o.accession}">
-                          ${o.organism} — ${o.accession} (${o.length} aa)
-                        </option>`
-                    )}
-                  </select>
-                  ${this._comparisonLoading
-                    ? html`<span class="protvista-goto__hint">aligning…</span>`
-                    : ''}`
-              : html`<button
-                  type="button"
-                  @click="${() => this._loadOrthologOptions()}"
-                >
-                  ${this._orthologOptionsLoading
-                    ? 'Loading orthologs…'
-                    : 'Compare with ortholog'}
-                </button>`}
-          ${this._comparisonError
-            ? html`<span class="protvista-goto__error" role="alert"
-                >${this._comparisonError}</span
-              >`
-            : ''}
-        </div>
       </form>
       <nightingale-manager
         reflected-attributes="length display-start display-end highlight activefilters filters"

@@ -335,11 +335,16 @@ export default css`
   .protvista-compare {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 0.5rem;
     flex-wrap: wrap;
     font-size: 0.8rem;
-    margin-top: 0.25rem;
+    margin-left: 0.6rem;
+    padding-left: 0.8rem;
+    border-left: 1px solid var(--protvista-track-background);
+  }
+
+  .protvista-compare select {
+    max-width: 21rem;
   }
 
   .protvista-compare select,

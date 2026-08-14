@@ -163,6 +163,43 @@ describe('ortholog comparison', () => {
     ).toBe(false);
   });
 
+  it('a slow earlier pick cannot overwrite a later one', async () => {
+    let releaseSlow: (() => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const slow = url.includes('/SLOW');
+        if (slow && url.includes('/proteins/api/proteins/')) {
+          await new Promise<void>((resolve) => {
+            releaseSlow = resolve;
+          });
+        }
+        if (url.includes('/proteins/api/proteins/')) {
+          return {
+            ok: true,
+            json: async () => ({
+              sequence: { sequence: slow ? 'MKLVWAGHRT' : 'MKWAGHRT' },
+              organism: {
+                names: [
+                  { type: 'scientific', value: slow ? 'Slowus' : 'Fastus' },
+                ],
+              },
+            }),
+          };
+        }
+        return { ok: true, json: async () => ({ features: [] }) };
+      })
+    );
+    const instance = createInstance();
+    const first = instance._startComparison('SLOW1'); // hangs on entry fetch
+    await instance._startComparison('FAST2');
+    expect(instance._comparison?.organism).toBe('Fastus');
+    releaseSlow?.();
+    await first;
+    // the stale run must not have replaced the newer comparison
+    expect(instance._comparison?.organism).toBe('Fastus');
+  });
+
   it('surfaces errors without breaking state', async () => {
     vi.stubGlobal(
       'fetch',
