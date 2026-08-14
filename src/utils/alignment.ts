@@ -53,11 +53,23 @@ export const alignSequences = (
   const n = reference.length;
   const m = ortholog.length;
   if (n === 0 || m === 0) throw new Error('Empty sequence');
-  if ((n + 1) * (m + 1) > MAX_ALIGNMENT_CELLS) {
-    throw new Error(
-      `Sequences too long to align in the browser (${n} x ${m} residues)`
-    );
+  if ((n + 1) * (m + 1) <= MAX_ALIGNMENT_CELLS) {
+    return alignCore(reference, ortholog);
   }
+  // TITIN-scale pairs: full dynamic programming is quadratic, but UniRef50
+  // orthologs share long exact stretches, so anchor on those and only run
+  // the expensive alignment in the short windows between anchors
+  const anchored = alignAnchored(reference, ortholog);
+  if (anchored) return anchored;
+  throw new Error(
+    `Sequences too long to align in the browser (${n} x ${m} residues), ` +
+      `and not similar enough for fast anchored alignment`
+  );
+};
+
+const alignCore = (reference: string, ortholog: string): PairwiseAlignment => {
+  const n = reference.length;
+  const m = ortholog.length;
   const width = m + 1;
   const score = new Float32Array((n + 1) * width);
   // 0 = diagonal, 1 = up (gap in ortholog), 2 = left (gap in reference)
@@ -127,6 +139,142 @@ export const alignSequences = (
       j -= 1;
     }
   }
+  return {
+    mapping,
+    status,
+    identity: alignedLength ? identical / alignedLength : 0,
+    alignedLength,
+  };
+};
+
+/** Anchor seed length: 20^8 possible 8-mers makes repeats within one
+ * protein rare, so unique shared 8-mers are trustworthy anchor points */
+const KMER = 8;
+/** Below this many co-linear anchors the sequences are not ortholog-like
+ * and the anchored shortcut would produce a misleading mosaic */
+const MIN_ANCHORS = 8;
+
+/**
+ * Anchored alignment for pairs too large for full dynamic programming:
+ * find k-mers unique in both sequences, chain the co-linear subset
+ * (longest increasing subsequence), trust each anchor as an exact match
+ * and run Needleman-Wunsch only inside the windows between anchors.
+ * Near-linear for real ortholog pairs (TITIN vs mouse TITIN in well under
+ * a second). Returns undefined when too few anchors exist.
+ */
+const alignAnchored = (
+  reference: string,
+  ortholog: string
+): PairwiseAlignment | undefined => {
+  const n = reference.length;
+  const m = ortholog.length;
+
+  // Positions of k-mers unique within each sequence (-2 marks repeats)
+  const orthologIndex = new Map<string, number>();
+  for (let j = 0; j + KMER <= m; j += 1) {
+    const kmer = ortholog.slice(j, j + KMER);
+    orthologIndex.set(kmer, orthologIndex.has(kmer) ? -2 : j);
+  }
+  const referenceCount = new Map<string, number>();
+  for (let i = 0; i + KMER <= n; i += 1) {
+    const kmer = reference.slice(i, i + KMER);
+    referenceCount.set(kmer, (referenceCount.get(kmer) ?? 0) + 1);
+  }
+  type Anchor = { i: number; j: number };
+  const candidates: Anchor[] = [];
+  for (let i = 0; i + KMER <= n; i += 1) {
+    const kmer = reference.slice(i, i + KMER);
+    if (referenceCount.get(kmer) !== 1) continue;
+    const j = orthologIndex.get(kmer);
+    if (j === undefined || j < 0) continue;
+    candidates.push({ i, j });
+  }
+  if (candidates.length < MIN_ANCHORS) return undefined;
+
+  // Longest increasing subsequence on ortholog positions (candidates are
+  // already ordered by reference position) keeps only co-linear anchors,
+  // discarding matches from shuffled or repeated domains
+  const tails: number[] = [];
+  const tailPositions: number[] = [];
+  const parent = new Int32Array(candidates.length).fill(-1);
+  for (let c = 0; c < candidates.length; c += 1) {
+    const { j } = candidates[c];
+    let low = 0;
+    let high = tailPositions.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (tailPositions[mid] < j) low = mid + 1;
+      else high = mid;
+    }
+    if (low > 0) parent[c] = tails[low - 1];
+    tails[low] = c;
+    tailPositions[low] = j;
+  }
+  const chain: Anchor[] = [];
+  for (let c = tails[tailPositions.length - 1]; c !== -1; c = parent[c]) {
+    chain.push(candidates[c]);
+  }
+  chain.reverse();
+
+  // Keep a non-overlapping subset so inter-anchor windows are well formed
+  const anchors: Anchor[] = [];
+  let previousEndI = -1;
+  let previousEndJ = -1;
+  for (const anchor of chain) {
+    if (anchor.i > previousEndI && anchor.j > previousEndJ) {
+      anchors.push(anchor);
+      previousEndI = anchor.i + KMER - 1;
+      previousEndJ = anchor.j + KMER - 1;
+    }
+  }
+  if (anchors.length < MIN_ANCHORS) return undefined;
+
+  const mapping = new Int32Array(n + 1);
+  const status: ConservationStatus[] = new Array(n + 1).fill('gap');
+  let identical = 0;
+  let alignedLength = 0;
+
+  // Align one inter-anchor window ([start, end) in 0-based coordinates)
+  // and merge its result into the global arrays with offsets applied
+  const mergeSegment = (
+    refStart: number,
+    refEnd: number,
+    orthoStart: number,
+    orthoEnd: number
+  ) => {
+    const a = reference.slice(refStart, refEnd);
+    const b = ortholog.slice(orthoStart, orthoEnd);
+    if (!a.length || !b.length) return; // pure insertion/deletion: gap
+    // A pathological window (huge divergent stretch) stays unaligned
+    // rather than blowing the memory budget
+    if ((a.length + 1) * (b.length + 1) > MAX_ALIGNMENT_CELLS) return;
+    const segment = alignCore(a, b);
+    for (let t = 1; t <= a.length; t += 1) {
+      status[refStart + t] = segment.status[t];
+      const mapped = segment.mapping[t];
+      if (mapped > 0) {
+        mapping[refStart + t] = orthoStart + mapped;
+        alignedLength += 1;
+        if (segment.status[t] === 'identical') identical += 1;
+      }
+    }
+  };
+
+  let cursorI = 0;
+  let cursorJ = 0;
+  for (const anchor of anchors) {
+    mergeSegment(cursorI, anchor.i, cursorJ, anchor.j);
+    for (let t = 0; t < KMER; t += 1) {
+      mapping[anchor.i + t + 1] = anchor.j + t + 1;
+      status[anchor.i + t + 1] = 'identical';
+      identical += 1;
+      alignedLength += 1;
+    }
+    cursorI = anchor.i + KMER;
+    cursorJ = anchor.j + KMER;
+  }
+  mergeSegment(cursorI, n, cursorJ, m);
+
   return {
     mapping,
     status,
