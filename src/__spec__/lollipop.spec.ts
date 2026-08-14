@@ -80,9 +80,22 @@ describe('protvista-lollipop-track', () => {
     // Simulate the state the manager/zoom machinery provides in a page
     instance.getXFromSeqPosition = (p: number) => p * 2;
     instance.getSingleBaseWidth = () => 2;
-    Object.defineProperty(instance, 'width', { value: 800 });
-    Object.defineProperty(instance, 'height', { value: 55 });
-    Object.defineProperty(instance, 'xScale', { value: () => 0 });
+    // writable/configurable: the mixins' own lifecycle also assigns these
+    Object.defineProperty(instance, 'width', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(instance, 'height', {
+      value: 55,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(instance, 'xScale', {
+      value: () => 0,
+      writable: true,
+      configurable: true,
+    });
     document.body.appendChild(instance);
     return instance;
   };
