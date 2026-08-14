@@ -762,6 +762,41 @@ class ProtvistaUniprot extends LitElement {
     if (trackKey) this._toggleStructureHighlight(trackKey, input.checked);
   }
 
+  /**
+   * Zoom controls with the same behaviour as uniprot.org's toolbar:
+   * out/in by a fifth of the sequence, or straight to ~29 visible
+   * residues (letter-level view).
+   */
+  _handleZoom(operation: 'zoom-out' | 'zoom-in' | 'zoom-in-seq') {
+    const length = this.sequence?.length;
+    const navigation = this.querySelector('nightingale-navigation') as
+      | (HTMLElement & { 'display-start'?: number; 'display-end'?: number })
+      | null;
+    if (!length || !navigation) return;
+    const displayStart = Number(navigation['display-start'] ?? 1);
+    const displayEnd = Number(navigation['display-end'] ?? length);
+    const scaleFactor = length / 5;
+    let k: number;
+    if (operation === 'zoom-in') k = scaleFactor;
+    else if (operation === 'zoom-out') k = -scaleFactor;
+    else k = displayEnd - displayStart - 29;
+    const newEnd = displayEnd - k;
+    let newStart = displayStart;
+    if (newEnd > length) newStart -= newEnd - length;
+    if (displayStart < newEnd) {
+      navigation.dispatchEvent(
+        new CustomEvent('change', {
+          detail: {
+            'display-start': Math.max(1, Math.round(newStart)),
+            'display-end': Math.min(Math.round(newEnd), length),
+          },
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    }
+  }
+
   _handleGoToSubmit(e: Event) {
     e.preventDefault();
     const input = (e.target as HTMLFormElement).elements.namedItem(
@@ -1243,6 +1278,29 @@ class ProtvistaUniprot extends LitElement {
       ${this._progressTemplate}
       <form class="protvista-goto" @submit="${this._handleGoToSubmit}">
         <div class="protvista-goto__row">
+          <span class="protvista-zoom-tool" role="group" aria-label="Zoom">
+            <button
+              type="button"
+              title="Zoom out"
+              @click="${() => this._handleZoom('zoom-out')}"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              title="Zoom in"
+              @click="${() => this._handleZoom('zoom-in')}"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              title="Zoom to sequence (29 residues)"
+              @click="${() => this._handleZoom('zoom-in-seq')}"
+            >
+              AA
+            </button>
+          </span>
           <label for="protvista-goto-input">Go to position</label>
           <input
             id="protvista-goto-input"
