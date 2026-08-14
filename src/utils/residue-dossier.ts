@@ -71,6 +71,61 @@ export type SpatialNeighbour = {
   confidence: string;
 };
 
+/**
+ * Annotation types that describe observations rather than function
+ * (immune epitopes, sequence conflicts...). They stay in the report but
+ * are capped so they cannot drown out sites, PTMs and binding residues.
+ */
+export const LOW_SIGNAL_TYPES = new Set([
+  'EPITOPE',
+  'ANTIGEN',
+  'CONFLICT',
+  'VAR_SEQ',
+  'NON_CONS',
+  'NON_TER',
+  'UNSURE',
+]);
+export const LOW_SIGNAL_MAX = 2;
+
+const isLowSignal = (type: string) => LOW_SIGNAL_TYPES.has(type.toUpperCase());
+
+/** Compact the boilerplate IEDB epitope descriptions */
+export const compactDescription = (
+  type: string,
+  description?: string
+): string | undefined => {
+  if (!description) return undefined;
+  if (type.toUpperCase() === 'EPITOPE') {
+    const match = description.match(
+      /^([A-Z]{5,30}) is a linear peptidic epitope \(epitope ID (\d+)\)/
+    );
+    if (match) return `epitope ${match[1]} (IEDB ${match[2]})`;
+  }
+  return description;
+};
+
+/** Distance-ordered selection with the low-signal cap applied */
+const capLowSignal = <T extends { feature: { type: string } } | DossierFeature>(
+  items: T[],
+  limit: number
+): T[] => {
+  const kept: T[] = [];
+  let lowSignal = 0;
+  for (const item of items) {
+    const type =
+      'feature' in item
+        ? (item as { feature: { type: string } }).feature.type
+        : (item as DossierFeature).type;
+    if (isLowSignal(type)) {
+      if (lowSignal >= LOW_SIGNAL_MAX) continue;
+      lowSignal += 1;
+    }
+    kept.push(item);
+    if (kept.length >= limit) break;
+  }
+  return kept;
+};
+
 /** Long features (chains, big domains) belong in "located in", not in
  * the spatial-neighbour list */
 export const NEIGHBOUR_MAX_SPAN = 50;
@@ -111,7 +166,10 @@ export const computeSpatialNeighbours = (
       ),
     });
   }
-  return neighbours.sort((a, b) => a.distance - b.distance).slice(0, limit);
+  return capLowSignal(
+    neighbours.sort((a, b) => a.distance - b.distance),
+    limit
+  ) as SpatialNeighbour[];
 };
 
 /** Categories whose entries are not positional annotations */
@@ -148,8 +206,10 @@ export const collectDossierFeatures = (
         start,
         end: Number.isFinite(end) ? Math.max(end, start) : start,
         type,
-        description:
-          typeof raw?.description === 'string' ? raw.description : undefined,
+        description: compactDescription(
+          type,
+          typeof raw?.description === 'string' ? raw.description : undefined
+        ),
         category,
       });
     }
@@ -183,9 +243,12 @@ export const buildResidueDossier = (options: {
 }): ResidueDossier => {
   const { position, sequence, data, variants, coords } = options;
   const features = collectDossierFeatures(data);
-  const containing = features
-    .filter((f) => position >= f.start && position <= f.end)
-    .sort((a, b) => a.end - a.start - (b.end - b.start));
+  const containing = capLowSignal(
+    features
+      .filter((f) => position >= f.start && position <= f.end)
+      .sort((a, b) => a.end - a.start - (b.end - b.start)),
+    6
+  ) as DossierFeature[];
   const neighbours = coords
     ? computeSpatialNeighbours(coords, position, features)
     : [];
@@ -212,7 +275,7 @@ export const buildResidueDossier = (options: {
     position,
     aminoAcid: sequence?.charAt(position - 1) || undefined,
     plddt: coords?.get(position)?.plddt,
-    containing: containing.slice(0, 6),
+    containing,
     neighbours,
     variants: variantList,
     coverage,

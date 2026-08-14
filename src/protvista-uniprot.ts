@@ -1926,7 +1926,12 @@ class ProtvistaUniprot extends LitElement {
                                 (f) =>
                                   html`<li>
                                     ${f.type}${f.description
-                                      ? html` · ${f.description}`
+                                      ? html` ·
+                                          <span title="${f.description}"
+                                            >${f.description.length > 60
+                                              ? `${f.description.slice(0, 57)}…`
+                                              : f.description}</span
+                                          >`
                                       : ''}
                                     <span class="protvista-dossier__muted"
                                       >${f.start}–${f.end}</span

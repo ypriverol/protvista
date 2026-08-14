@@ -150,3 +150,47 @@ describe('plddtBucket', () => {
     expect(plddtBucket(30)).toBe('very low');
   });
 });
+
+describe('low-signal prioritisation', () => {
+  it('caps epitopes/conflicts in the spatial list and compacts IEDB text', async () => {
+    const {
+      parseAlphaFoldPdb: parse,
+      computeSpatialNeighbours: neighbours,
+      compactDescription,
+    } = await import('../utils/residue-dossier');
+    const rows = [];
+    for (let r = 1; r <= 12; r++) rows.push([r, r * 2, 0, 0, 90]);
+    const coords = parse(
+      rows
+        .map(
+          ([res, x, y, z, plddt]) =>
+            `ATOM  ${String(res).padStart(5)}  CA  ALA A${String(res).padStart(4)}    ${x.toFixed(3).padStart(8)}${y.toFixed(3).padStart(8)}${z.toFixed(3).padStart(8)}  1.00${plddt.toFixed(2).padStart(6)}           C`
+        )
+        .join('\n')
+    );
+    const features = [
+      { start: 2, end: 2, type: 'EPITOPE', category: 'EPITOPE' },
+      { start: 3, end: 3, type: 'EPITOPE', category: 'EPITOPE' },
+      { start: 4, end: 4, type: 'EPITOPE', category: 'EPITOPE' },
+      { start: 5, end: 5, type: 'EPITOPE', category: 'EPITOPE' },
+      { start: 10, end: 10, type: 'ACT_SITE', category: 'SITES' },
+      { start: 11, end: 11, type: 'MOD_RES', category: 'PTM' },
+    ];
+    const result = neighbours(coords, 1, features);
+    const epitopes = result.filter((n) => n.feature.type === 'EPITOPE');
+    expect(epitopes.length).toBe(2); // capped despite being closest
+    // functional annotations survive even though they are farther away
+    expect(result.some((n) => n.feature.type === 'ACT_SITE')).toBe(true);
+    expect(result.some((n) => n.feature.type === 'MOD_RES')).toBe(true);
+
+    expect(
+      compactDescription(
+        'EPITOPE',
+        'KITDFGLAK is a linear peptidic epitope (epitope ID 989859) tested in 1 B cell assay and 2 MHC ligand assays.'
+      )
+    ).toBe('epitope KITDFGLAK (IEDB 989859)');
+    expect(compactDescription('DOMAIN', 'Protein kinase')).toBe(
+      'Protein kinase'
+    );
+  });
+});
