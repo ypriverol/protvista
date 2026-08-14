@@ -87,3 +87,90 @@ export const buildHighlight = (
     truncated,
   };
 };
+
+export type LegendEntry = {
+  key: string;
+  label: string;
+  color: string;
+  count: number;
+  intervals: Interval[];
+};
+
+type LegendCategory = {
+  name: string;
+  label?: string;
+  color?: string;
+  tracks?: {
+    name: string;
+    label?: string;
+    color?: string;
+  }[];
+};
+
+/**
+ * Human-readable legend for the tracks currently highlighted on the 3D
+ * structure: the structure paint is a single colour (the nightingale
+ * highlight channel), so the legend carries each selection's identity and
+ * its 1D track colour instead.
+ */
+export const buildStructureLegend = (
+  categories: LegendCategory[] | undefined,
+  selectedKeys: Iterable<string>,
+  trackData: Record<string, unknown>
+): LegendEntry[] => {
+  const entries: LegendEntry[] = [];
+  for (const key of selectedKeys) {
+    const separator = key.indexOf('-');
+    const categoryName = key.slice(0, separator);
+    const trackName = key.slice(separator + 1);
+    const category = categories?.find((c) => c.name === categoryName);
+    const track = category?.tracks?.find((t) => t.name === trackName);
+    const intervals = mergeIntervals(collectIntervals(trackData[key]));
+    entries.push({
+      key,
+      label: track?.label || trackName || key,
+      color: track?.color || category?.color || '#00639a',
+      count: intervals.length,
+      intervals,
+    });
+  }
+  return entries;
+};
+
+/** Parse a structure row's "672-711" coverage string */
+export const parseCoverage = (positions?: string): Interval | undefined => {
+  const match = positions?.match(/(\d+)\s*-\s*(\d+)/);
+  if (!match) return undefined;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  return start <= end ? { start, end } : { start: end, end: start };
+};
+
+/** Parse a nightingale highlight string ("s:e,s:e") into intervals */
+export const parseHighlightString = (highlight?: string): Interval[] =>
+  (highlight ?? '')
+    .split(',')
+    .map((segment) => {
+      const [start, end] = segment.split(':').map(Number);
+      return { start, end: Number.isFinite(end) ? end : start };
+    })
+    .filter((i) => Number.isFinite(i.start) && i.start >= 1);
+
+/** Clip intervals to a coverage range (drops non-overlapping ones) */
+export const clipIntervalsToRange = (
+  intervals: Interval[],
+  range: Interval
+): Interval[] =>
+  intervals
+    .map((i) => ({
+      start: Math.max(i.start, range.start),
+      end: Math.min(i.end, range.end),
+    }))
+    .filter((i) => i.start <= i.end);
+
+/** Total residues of `intervals` covered by `range` */
+export const overlapLength = (intervals: Interval[], range: Interval): number =>
+  clipIntervalsToRange(intervals, range).reduce(
+    (sum, i) => sum + (i.end - i.start + 1),
+    0
+  );
