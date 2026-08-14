@@ -121,6 +121,7 @@ Key points:
 | `nightingale-variation-canvas` | variants (position × alternative residue) |
 | `nightingale-linegraph-track`  | line graphs (e.g. variant counts)         |
 | `nightingale-sequence-heatmap` | position × class heatmaps                 |
+| `protvista-lollipop-track`     | sparse per-residue events as lollipops    |
 
 ### Built-in adapters and their payload contracts
 
@@ -138,6 +139,7 @@ Key points:
 | `alphamissense-pathogenicity-adapter` | AlphaFold API AlphaMissense payload                                                   |
 | `alphamissense-heatmap-adapter`       | AlphaFold API AlphaMissense payload (heatmap form)                                    |
 | `rna-editing-adapter`                 | Proteins API RNA editing                                                              |
+| `rna-editing-lollipop-adapter`        | Proteins API RNA editing, aggregated per position for the lollipop track              |
 | `rna-editing-graph-adapter`           | Proteins API RNA editing (aggregated)                                                 |
 
 When `adapter` is omitted the payload is passed to the track element

@@ -30,6 +30,8 @@ import interproAdapter from './adapters/interpro-adapter';
 import variationGraphAdapter from './adapters/variation-graph-adapter';
 import rnaEditingGraphAdapter from './adapters/rna-editing-graph-adapter';
 import rnaEditingAdapter from './adapters/rna-editing-adapter';
+import rnaEditingLollipopAdapter from './adapters/rna-editing-lollipop-adapter';
+import ProtvistaLollipopTrack from './elements/protvista-lollipop-track';
 import proteomicsPTMApdapter from './adapters/ptm-exchange-adapter';
 import alphaFoldConfidenceAdapter from './adapters/alphafold-confidence-adapter';
 import alphaMissensePathogenicityAdapter from './adapters/alphamissense-pathogenicity-adapter';
@@ -146,6 +148,10 @@ async function callAdapter(
     case 'rna-editing-adapter':
       return rnaEditingAdapter(
         ...(raw as Parameters<typeof rnaEditingAdapter>)
+      );
+    case 'rna-editing-lollipop-adapter':
+      return rnaEditingLollipopAdapter(
+        ...(raw as Parameters<typeof rnaEditingLollipopAdapter>)
       );
     case 'rna-editing-graph-adapter':
       return rnaEditingGraphAdapter(
@@ -397,6 +403,7 @@ class ProtvistaUniprot extends LitElement {
     loadComponent('nightingale-filter', NightingaleFilter);
     loadComponent('nightingale-manager', NightingaleManager);
     loadComponent('protvista-uniprot-structure', ProtvistaUniprotStructure);
+    loadComponent('protvista-lollipop-track', ProtvistaLollipopTrack);
     loadComponent('nightingale-sequence-heatmap', NightingaleSequenceHeatmap);
   }
 
@@ -1620,6 +1627,19 @@ class ProtvistaUniprot extends LitElement {
             use-ctrl-to-zoom
           >
           </nightingale-track-canvas>
+        `;
+      case 'protvista-lollipop-track':
+        return html`
+          <protvista-lollipop-track
+            length="${this.sequence?.length}"
+            height="55"
+            display-start="${this.displayCoordinates?.start}"
+            display-end="${this.displayCoordinates?.end}"
+            id="track-${id}"
+            margin-color="transparent"
+            use-ctrl-to-zoom
+          >
+          </protvista-lollipop-track>
         `;
       case 'nightingale-interpro-track':
         return html`

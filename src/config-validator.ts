@@ -13,6 +13,7 @@ import { ProtvistaConfig } from './config';
 
 export const TRACK_TYPES = [
   'nightingale-track-canvas',
+  'protvista-lollipop-track',
   'nightingale-interpro-track',
   'nightingale-colored-sequence',
   'nightingale-variation-canvas',
@@ -33,6 +34,7 @@ export const ADAPTERS = [
   'alphamissense-heatmap-adapter',
   'proteomics-ptm-adapter',
   'rna-editing-adapter',
+  'rna-editing-lollipop-adapter',
   'rna-editing-graph-adapter',
 ] as const;
 
