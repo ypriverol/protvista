@@ -176,6 +176,11 @@
           "type": "integer",
           "minimum": 1,
           "description": "Defer fetching this category's data until the user expands it when the protein is longer than this many residues (for heavy payloads such as variants on very large proteins)."
+        },
+        "regionChunkSize": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "When the protein is longer than this many residues, fetch the category's data automatically in residue windows of this size (via the Proteins API location parameter), refreshing summaries as chunks arrive."
         }
       }
     }

@@ -56,6 +56,11 @@ import {
   GnCoordinate,
 } from './utils/coordinate-navigation';
 import { buildHighlight } from './utils/structure-highlight';
+import {
+  buildRegionChunks,
+  withLocationParam,
+  mergeChunkPayloads,
+} from './utils/region-chunks';
 
 import { TransformedInterPro } from './adapters/types/interpro';
 import { StructureFeature } from './adapters/structure-adapter';
@@ -514,14 +519,21 @@ class ProtvistaUniprot extends LitElement {
     category: ProtvistaConfig['categories'][number],
     accession: string
   ) {
-    const { name: categoryName, tracks, trackType } = category;
     // Wait only for the urls this category actually uses
     const categoryUrls = [
-      ...new Set(tracks.flatMap(({ data }) => data[0].url).flat()),
+      ...new Set(category.tracks.flatMap(({ data }) => data[0].url).flat()),
     ];
     await Promise.all(
       categoryUrls.map((url) => this._ensureUrlFetched(url, accession))
     );
+    await this._transformCategoryTracks(category);
+  }
+
+  /** Transform this.rawData into track/category data for one category */
+  async _transformCategoryTracks(
+    category: ProtvistaConfig['categories'][number]
+  ) {
+    const { name: categoryName, tracks, trackType } = category;
     const categoryData = await Promise.all(
       tracks.map(async ({ data: dataConfig, name: trackName, filter }) => {
         const { url, adapter } = dataConfig[0]; // TODO handle array
@@ -601,6 +613,81 @@ class ProtvistaUniprot extends LitElement {
     this.requestUpdate();
   }
 
+  /**
+   * Fetch a heavy category in residue-window chunks (config
+   * regionChunkSize), automatically and in parallel. Summaries refresh at
+   * checkpoints as chunks land, so e.g. the variant counts graph appears
+   * after the first window instead of after an ~85MB monolith.
+   */
+  async _processCategoryChunked(
+    category: ProtvistaConfig['categories'][number],
+    accession: string
+  ) {
+    const chunkSize = category.regionChunkSize as number;
+    const length = this.sequence?.length ?? 0;
+    const chunks = buildRegionChunks(length, chunkSize);
+    const urls = [
+      ...new Set(category.tracks.flatMap(({ data }) => data[0].url).flat()),
+    ] as string[];
+
+    const slotsByUrl = new Map<string, (unknown | null)[]>(
+      urls.map((url) => [url, new Array(chunks.length).fill(null)])
+    );
+    let arrivedCount = 0;
+    let lastCheckpoint = 0;
+    let transforming = Promise.resolve();
+
+    const refresh = () => {
+      // Serialise transforms; each one reads the current merged rawData
+      transforming = transforming.then(() => {
+        for (const url of urls) {
+          const merged = mergeChunkPayloads(
+            slotsByUrl.get(url) as (Record<string, unknown> | null)[]
+          );
+          if (merged) this.rawData[url] = merged as TrackPayload;
+        }
+        return this._transformCategoryTracks(category);
+      });
+      return transforming;
+    };
+
+    const totalFetches = urls.length * chunks.length;
+    await Promise.all(
+      urls.flatMap((url) =>
+        chunks.map((chunk, index) =>
+          this._ensureUrlFetched(withLocationParam(url, chunk), accession).then(
+            (payload) => {
+              const slots = slotsByUrl.get(url);
+              if (slots) slots[index] = payload;
+              arrivedCount += 1;
+              // Checkpoints: first arrival, then every 3rd, then completion
+              if (
+                arrivedCount === 1 ||
+                arrivedCount - lastCheckpoint >= 3 ||
+                arrivedCount === totalFetches
+              ) {
+                lastCheckpoint = arrivedCount;
+                refresh();
+              }
+            }
+          )
+        )
+      )
+    );
+    await refresh();
+    // Release the chunk payloads; the transformed data is what the tracks
+    // hold on to
+    for (const url of urls) {
+      delete this.rawData[url];
+      for (const chunk of chunks) {
+        const chunkUrl = withLocationParam(url, chunk);
+        delete this.rawData[chunkUrl];
+        this._urlPromises.delete(chunkUrl);
+      }
+      slotsByUrl.set(url, []);
+    }
+  }
+
   /** Fetch and mount a category whose loading was deferred (lazyThreshold) */
   async _loadDeferredCategory(name: string) {
     const accession = this.accession;
@@ -629,8 +716,17 @@ class ProtvistaUniprot extends LitElement {
       // user opens the variants category.
       const sequenceLength = this.sequence?.length ?? 0;
       const eager: ProtvistaConfig['categories'] = [];
+      const chunked: ProtvistaConfig['categories'] = [];
       for (const category of this.config.categories) {
-        if (category.lazyThreshold && sequenceLength > category.lazyThreshold) {
+        if (
+          category.regionChunkSize &&
+          sequenceLength > category.regionChunkSize
+        ) {
+          chunked.push(category);
+        } else if (
+          category.lazyThreshold &&
+          sequenceLength > category.lazyThreshold
+        ) {
           this._deferredCategories.add(category.name);
         } else {
           eager.push(category);
@@ -649,9 +745,12 @@ class ProtvistaUniprot extends LitElement {
         this._ensureUrlFetched(url, accession);
       }
 
-      await Promise.all(
-        eager.map((category) => this._processCategory(category, accession))
-      );
+      await Promise.all([
+        ...eager.map((category) => this._processCategory(category, accession)),
+        ...chunked.map((category) =>
+          this._processCategoryChunked(category, accession)
+        ),
+      ]);
 
       // Every eager category has been transformed into this.data; release
       // the raw payloads instead of pinning them in memory. Deferred
